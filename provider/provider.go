@@ -25,9 +25,15 @@ const (
 	// HTTP request being made. That was 1,542 of the 2,645 errors seen in a
 	// 30-minute window on 2026-08-21.
 	//
-	// 35s leaves room for a full 10s limiter wait plus a slow scrape, so requests
+	// The ceiling is the host's own deadline: pluginhost.DefaultMetadataTimeout
+	// is 30s for a metadata RPC, so anything at or above that just moves the
+	// failure from us to the caller -- 35s produced a sweep of
+	// "rpc error: code = DeadlineExceeded" instead of results.
+	//
+	// 25s stays inside that budget with headroom for gRPC overhead while still
+	// leaving room for a full 10s limiter wait plus a slow scrape, so requests
 	// queue and succeed at the limited rate instead of failing instantly.
-	providerTimeout = 35 * time.Second
+	providerTimeout = 25 * time.Second
 
 	// searchWorkers is the maximum number of providers queried in parallel.
 	searchWorkers = 3
