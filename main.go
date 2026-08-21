@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
@@ -64,7 +67,7 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 		Language:    req.GetLanguage(),
 	})
 	if err != nil {
-		return nil, err
+		return nil, searchFailureStatus(err)
 	}
 
 	response := &pluginv1.SearchMetadataResponse{
@@ -167,6 +170,30 @@ func providerIDsFromProto(value *structpb.Struct, capabilityID string, fallbackI
 		result[capabilityID] = fallbackID
 	}
 	return result
+}
+
+// searchFailureStatus gives an all-providers-failed error an explicit gRPC
+// code, so the host classifies it by CODE rather than by pattern-matching the
+// message.
+//
+// Without a code the error arrives as codes.Unknown, which is exactly the case
+// where silo-server falls through to reading the text -- and a bare 401/403 in
+// there is treated as permanent for the item and parks it for 30 days. Every
+// failure here is an availability problem: the item was never judged, so it
+// must stay retryable.
+//
+//	Unavailable       -> transient    (minutes)
+//	ResourceExhausted -> rate-limited (hours, which is what throttling wants)
+func searchFailureStatus(err error) error {
+	var failed *provider.ProvidersFailedError
+	if !errors.As(err, &failed) {
+		return err
+	}
+	code := codes.Unavailable
+	if failed.RateLimited() {
+		code = codes.ResourceExhausted
+	}
+	return status.Error(code, failed.Error())
 }
 
 func providerSearchResultFromMatch(match metadata.Match, itemType string) (*pluginv1.ProviderSearchResult, error) {
