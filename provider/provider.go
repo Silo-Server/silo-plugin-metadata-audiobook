@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -14,7 +16,18 @@ const (
 	capabilityProviderID = "audiobook-metadata"
 
 	// providerTimeout is the per-provider deadline for Search/Fetch calls.
-	providerTimeout = 10 * time.Second
+	//
+	// Must exceed the slowest provider's rate-limit interval, or that provider can
+	// never serve a second request. rate.Limiter.Wait fails IMMEDIATELY when the
+	// required wait would outlast the context deadline, so with the four scrapers
+	// at 6 rpm -- one request every 10s -- a 10s deadline meant every queued call
+	// returned "rate: Wait(n=1) would exceed context deadline" without a single
+	// HTTP request being made. That was 1,542 of the 2,645 errors seen in a
+	// 30-minute window on 2026-08-21.
+	//
+	// 35s leaves room for a full 10s limiter wait plus a slow scrape, so requests
+	// queue and succeed at the limited rate instead of failing instantly.
+	providerTimeout = 35 * time.Second
 
 	// searchWorkers is the maximum number of providers queried in parallel.
 	searchWorkers = 3
@@ -107,8 +120,29 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 	}()
 
 	var all []metadata.Match
+	var errs []error
 	for r := range ch {
 		all = append(all, r.matches...)
+		if r.err != nil {
+			errs = append(errs, r.err)
+		}
+	}
+
+	// Report failure only when EVERY provider failed and none returned a match.
+	//
+	// The caller cannot tell "searched and found nothing" from "could not reach
+	// anything" unless we say so, and it acts very differently on each: Silo
+	// stamps a clean empty result as outcome=no_match with next_attempt_at NULL,
+	// which is terminal -- the item is never looked at again. Swallowing the
+	// errors here meant a provider outage permanently wrote items off. On
+	// 2026-08-21 that marked 500 audiobooks as "no match" in 25 minutes, on
+	// course to write off all 242,330 in about nine days, without a single
+	// provider having answered.
+	//
+	// Partial success stays a success: if one provider answered, the others
+	// failing is normal and the matches we did get are worth returning.
+	if len(all) == 0 && len(errs) > 0 {
+		return nil, fmt.Errorf("all %d audiobook provider(s) failed: %w", len(errs), errors.Join(errs...))
 	}
 
 	return all, nil
