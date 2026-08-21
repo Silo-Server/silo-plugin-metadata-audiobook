@@ -157,9 +157,55 @@ func (c *ITunesClient) Search(ctx context.Context, q metadata.SearchQuery) ([]me
 	return results, nil
 }
 
-// Fetch is not directly supported by the iTunes API (no single-item lookup
-// by collectionId in the public search API). Returns nil without error.
-func (c *ITunesClient) Fetch(_ context.Context, _ string) (*metadata.Match, error) {
+// Fetch returns full metadata for an iTunes collectionId.
+//
+// This used to return (nil, nil) with a comment claiming the public API has no
+// single-item lookup. It does: GET /lookup?id=<collectionId> is documented and
+// answers with the same result shape as /search. Verified 2026-08-21 --
+// /lookup?id=1641927799&entity=audiobook returns resultCount 1 with a 961-char
+// description and artwork.
+//
+// The stub was not a harmless gap. iTunes is by far the strongest provider here
+// (12 hits in 258ms where Audible needs ~20s for 2), so Silo admitted an iTunes
+// candidate in the search phase, called GetMetadata for it, got nothing back --
+// without an error, so nothing looked wrong -- and recorded the item as
+// outcome=no_match. That is terminal: next_attempt_at stays NULL and
+// media_items.last_refreshed is stamped, so the item is never retried. Across
+// 3,284 enrichment attempts on this library it produced exactly zero successes.
+func (c *ITunesClient) Fetch(ctx context.Context, id string) (*metadata.Match, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+
+	if err := waitForLimiter(ctx, c.limiter); err != nil {
+		return nil, err
+	}
+
+	params := url.Values{}
+	params.Set("id", id)
+	params.Set("entity", "audiobook")
+
+	body, err := c.get(ctx, c.baseURL+"/lookup?"+params.Encode())
+	if err != nil || body == nil {
+		return nil, err
+	}
+
+	var resp iTunesSearchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("itunes: decode lookup response: %w", err)
+	}
+
+	// A lookup can echo back a non-collection wrapper (an artist, say) when the
+	// id resolves to something else. Take the first entry that actually carries
+	// a collectionId rather than trusting position.
+	for _, r := range resp.Results {
+		if r.CollectionID == 0 {
+			continue
+		}
+		m := c.matchFromResult(r)
+		return &m, nil
+	}
 	return nil, nil
 }
 
