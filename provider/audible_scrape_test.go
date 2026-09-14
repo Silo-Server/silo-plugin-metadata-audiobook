@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -109,62 +110,106 @@ func TestAudibleFetchNotFoundReturnsNil(t *testing.T) {
 	}
 }
 
-func TestAudibleSearchASINs(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/audible_search.html")
+// Search reads the results page cards directly; it must not fetch product
+// pages, since each page costs a token from the six-per-minute bucket.
+func TestAudibleSearchReadsCardsWithoutProductPages(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/audible_search_cards.html")
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	productFixture, err := os.ReadFile("testdata/audible_product.html")
-	if err != nil {
-		t.Fatalf("read product fixture: %v", err)
-	}
-
+	var productHits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/search" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write(fixture)
+		if r.URL.Path != "/search" {
+			productHits++
+			http.NotFound(w, r)
 			return
 		}
-		// Product page requests.
+		if got := r.URL.Query().Get("keywords"); got != "Ready Player One Ernest Cline" {
+			t.Errorf("keywords = %q", got)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(productFixture)
+		w.Write(fixture)
 	}))
 	defer srv.Close()
 
 	scraper := NewAudibleScraper()
-	scraper.httpClient = &http.Client{}
-	// Override the base URL by temporarily replacing the region map.
-	origMap := audibleRegionMap
-	audibleRegionMap = map[string]string{"us": ""}
-	defer func() { audibleRegionMap = origMap }()
+	scraper.httpClient = srv.Client()
+	scraper.httpClient.Transport = rewriteHost(srv.URL, scraper.httpClient.Transport)
 
-	// Directly test the HTML parser for ASINs.
+	results, err := scraper.Search(context.Background(), metadata.SearchQuery{Title: "Ready Player One", Authors: []string{"Ernest Cline"}})
+	if err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if productHits != 0 {
+		t.Fatalf("product page requests = %d, want 0", productHits)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	first := results[0]
+	if first.ASIN != "B005FRGT44" || first.ProviderID != "B005FRGT44" || first.Provider != "audible" {
+		t.Errorf("first identity = %+v", first)
+	}
+	if first.Title != "Ready Player One" {
+		t.Errorf("Title = %q", first.Title)
+	}
+	if len(first.Authors) != 1 || first.Authors[0] != "Ernest Cline" {
+		t.Errorf("Authors = %v", first.Authors)
+	}
+	if len(first.Narrators) != 1 || first.Narrators[0] != "Wil Wheaton" {
+		t.Errorf("Narrators = %v", first.Narrators)
+	}
+	if first.DurationMin != 940 {
+		t.Errorf("DurationMin = %d, want 940", first.DurationMin)
+	}
+	if first.CoverURL != "https://m.media-amazon.com/images/I/41Eptolyo+L._SL500_.jpg" {
+		t.Errorf("CoverURL = %q", first.CoverURL)
+	}
+	if got := results[1].Narrators; len(got) != 2 || got[1] != "Jane Doe" {
+		t.Errorf("second Narrators = %v", got)
+	}
+	if results[2].DurationMin != 45 {
+		t.Errorf("minutes-only length = %d, want 45", results[2].DurationMin)
+	}
+}
+
+func TestParseSearchResultsHonorsLimit(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/audible_search_cards.html")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(fixture))
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
 	}
+	if got := len(parseSearchResults(doc, 2)); got != 2 {
+		t.Fatalf("results = %d, want 2", got)
+	}
+}
 
-	var asins []string
-	seen := make(map[string]bool)
-	doc.Find("[data-widget='productList'] a[href*='/pd/']").Each(func(_ int, sel *goquery.Selection) {
-		href, _ := sel.Attr("href")
-		m := asinPathRE.FindStringSubmatch(href)
-		if len(m) >= 2 && !seen[m[1]] {
-			seen[m[1]] = true
-			asins = append(asins, m[1])
+func TestParseAudibleLength(t *testing.T) {
+	tests := map[string]int{"15 hrs and 40 mins": 940, "1 hr and 1 min": 61, "45 mins": 45, "2 hrs": 120, "": 0}
+	for in, want := range tests {
+		if got := parseAudibleLength(in); got != want {
+			t.Errorf("parseAudibleLength(%q) = %d, want %d", in, got, want)
 		}
-	})
+	}
+}
 
-	if len(asins) != 2 {
-		t.Fatalf("expected 2 ASINs, got %d: %v", len(asins), asins)
+// rewriteHost points every request at the test server so the scraper's
+// hard-coded audible.com base URL is exercised unchanged.
+func rewriteHost(target string, next http.RoundTripper) http.RoundTripper {
+	if next == nil {
+		next = http.DefaultTransport
 	}
-	if asins[0] != "B002V0QHBU" {
-		t.Errorf("first ASIN = %q, want B002V0QHBU", asins[0])
-	}
-	if asins[1] != "B002V0RB8O" {
-		t.Errorf("second ASIN = %q, want B002V0RB8O", asins[1])
-	}
+	return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		clone := req.Clone(req.Context())
+		clone.URL.Scheme = "http"
+		clone.URL.Host = strings.TrimPrefix(target, "http://")
+		clone.Host = clone.URL.Host
+		return next.RoundTrip(clone)
+	})
 }
 
 func TestParseISODurationToMin(t *testing.T) {

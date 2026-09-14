@@ -6,8 +6,8 @@
   "presentation": {
     "display_name": "Audiobook Metadata",
     "summary": "Fetch audiobook metadata and artwork from multiple book and audiobook sources.",
-    "description_markdown": "Matches audiobook items across Audnexus, AudiMeta, iTunes, Audible, Storytel, BookBeat, Audioteka, and AudiobookCovers. It combines those sources into metadata and artwork for Silo audiobook libraries.",
-    "setup_markdown": "Install the plugin and add **Audiobook Metadata** to the metadata provider chain for an audiobook library. The default sources need no plugin configuration; upstream availability and rate limits still apply.",
+    "description_markdown": "Matches audiobook items against Audnexus, Apple Books, and AudiobookCovers by default, with Audible, Storytel, BookBeat, Audioteka, and AudiMeta available as optional sources. It combines those sources into metadata and artwork for Silo audiobook libraries.",
+    "setup_markdown": "Install the plugin and add **Audiobook Metadata** to the metadata provider chain for an audiobook library. Audnexus, Apple Books and AudiobookCovers are searched by default; the scrapers can be switched on in the plugin settings.",
     "homepage_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook",
     "source_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook",
     "support_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook/issues",
@@ -35,7 +35,7 @@
       "type": "metadata_provider.v1",
       "id": "audiobook-metadata",
       "display_name": "Audiobook Metadata",
-      "description": "Metadata provider for audiobook items. Wraps Audnexus, AudiMeta, iTunes, Audible, Storytel, BookBeat, Audioteka, and AudiobookCovers.",
+      "description": "Metadata provider for audiobook items. Searches Audnexus, Apple Books, and AudiobookCovers by default; Audible, Storytel, BookBeat, Audioteka, and AudiMeta can be enabled in the plugin settings.",
       "metadata": {
         "default_priority": {
           "audiobook": 2
@@ -43,5 +43,74 @@
       }
     }
   ],
-  "global_config_schema": []
+  "global_config_schema": [
+    {
+      "key": "sources",
+      "title": "Search sources",
+      "description": "Sources queried when identifying an audiobook by title. Every source still resolves an ID it already knows (ASIN or Apple Books ID), so disabling one only removes it from title searches.",
+      "json_schema": "{\"type\":\"object\",\"properties\":{\"audnexus\":{\"type\":\"boolean\"},\"itunes\":{\"type\":\"boolean\"},\"audiobookcovers\":{\"type\":\"boolean\"},\"audible\":{\"type\":\"boolean\"},\"storytel\":{\"type\":\"boolean\"},\"bookbeat\":{\"type\":\"boolean\"},\"audioteka\":{\"type\":\"boolean\"},\"audimeta\":{\"type\":\"boolean\"}},\"additionalProperties\":false}",
+      "required": false,
+      "admin_form": {
+        "submit_label": "Save search sources",
+        "fields": [
+          {
+            "key": "audnexus",
+            "label": "Audnexus",
+            "description": "Public API over Audible's catalog. Returns narrators, series, and cover art; answers in well under a second.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": true
+          },
+          {
+            "key": "itunes",
+            "label": "Apple Books",
+            "description": "Public iTunes Search API. Answers in about a second and has no narrator field.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": true
+          },
+          {
+            "key": "audiobookcovers",
+            "label": "AudiobookCovers.com",
+            "description": "Cover art looked up by ASIN. Fills in a cover when the matched source has none.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": true
+          },
+          {
+            "key": "audible",
+            "label": "Audible (scraper)",
+            "description": "Parses Audible search pages. Limited to six requests per minute.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": false
+          },
+          {
+            "key": "storytel",
+            "label": "Storytel (scraper)",
+            "description": "Parses Storytel catalog pages. Limited to six requests per minute.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": false
+          },
+          {
+            "key": "bookbeat",
+            "label": "BookBeat (scraper)",
+            "description": "Parses BookBeat catalog pages. Limited to six requests per minute.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": false
+          },
+          {
+            "key": "audioteka",
+            "label": "Audioteka (scraper)",
+            "description": "Parses Audioteka catalog pages. Limited to six requests per minute.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": false
+          },
+          {
+            "key": "audimeta",
+            "label": "AudiMeta",
+            "description": "The hosted API shut down in March 2026 and answers 403. Kept for self-hosted deployments.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": false
+          }
+        ]
+      }
+    }
+  ]
 }

@@ -6,14 +6,20 @@ for audiobook libraries. It implements `metadata_provider.v1` with capability ID
 
 ## Sources
 
-The provider searches Audnexus, AudiMeta, iTunes, Audible, Storytel, BookBeat,
-Audioteka, and AudiobookCovers. Some sources use public APIs and others parse
-their public catalog pages; upstream availability and rate limits still apply.
+By default the provider searches Audnexus, Apple Books (iTunes), and
+AudiobookCovers. Audible, Storytel, BookBeat, Audioteka, and AudiMeta can be
+switched on in the plugin settings; the four scrapers parse public catalog pages
+and are limited to six requests per minute each, so a title search that includes
+them takes several seconds longer. AudiMeta's hosted API shut down in March 2026.
+
+Every source still resolves an ID it already knows (an ASIN or Apple Books ID
+on the item), whether or not it is enabled for title searches.
 
 ## Configuration
 
-The plugin has no global configuration. Install it and add **Audiobook
-Metadata** to an audiobook library's metadata provider chain.
+One global setting, **Search sources**, with a switch per source. Install the
+plugin, add **Audiobook Metadata** to an audiobook library's metadata provider
+chain, and adjust the sources if the defaults miss your catalog.
 
 ## Development
 

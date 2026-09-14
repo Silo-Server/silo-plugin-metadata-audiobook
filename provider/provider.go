@@ -44,6 +44,29 @@ type searchProvider interface {
 	Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error)
 }
 
+// SourceConfig selects which sources take part in title searches. Every
+// source stays available for ID-based Fetch (an ASIN or iTunes ID already on
+// the item is always resolved), so disabling a source only removes it from
+// the search fan-out. Audnexus and iTunes are on by default: both are public
+// APIs that answer in well under a second. The scrapers default off because
+// each is throttled to one request every ten seconds and, with Audnexus
+// answering title queries, they rarely add a match the APIs did not.
+type SourceConfig struct {
+	Audnexus        bool
+	AudiMeta        bool
+	ITunes          bool
+	Audible         bool
+	Storytel        bool
+	BookBeat        bool
+	Audioteka       bool
+	AudiobookCovers bool
+}
+
+// DefaultSourceConfig is the fan-out used until the host supplies a config.
+func DefaultSourceConfig() SourceConfig {
+	return SourceConfig{Audnexus: true, ITunes: true, AudiobookCovers: true}
+}
+
 // Provider is the coordinator for all audiobook metadata sources.
 type Provider struct {
 	Audnexus        *AudnexusClient
@@ -54,11 +77,16 @@ type Provider struct {
 	BookBeat        *BookBeatScraper
 	Audioteka       *AudiotekaScraper
 	AudiobookCovers *AudiobookCoversClient
+
+	mu      sync.RWMutex
+	sources SourceConfig
 }
 
-// NewProvider creates a Provider with all source clients initialized.
+// NewProvider creates a Provider with all source clients initialized and the
+// default search fan-out.
 func NewProvider() *Provider {
 	return &Provider{
+		sources:         DefaultSourceConfig(),
 		Audnexus:        NewAudnexusClient(),
 		AudiMeta:        NewAudiMetaClient(),
 		ITunes:          NewITunesClient(),
@@ -70,24 +98,60 @@ func NewProvider() *Provider {
 	}
 }
 
-// Search queries all registered providers in parallel (up to searchWorkers
-// concurrent goroutines) and returns the merged results.
-// Errors from individual providers are logged but are not fatal.
-func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
-	type task struct {
-		name string
-		fn   searchProvider
-	}
+// SetSources replaces the search fan-out. Safe to call while searches run;
+// in-flight searches keep the set they started with.
+func (p *Provider) SetSources(cfg SourceConfig) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sources = cfg
+}
 
-	tasks := []task{
-		{"audnexus", p.Audnexus},
-		{"audimeta", p.AudiMeta},
-		{"itunes", p.ITunes},
-		{"audible", p.Audible},
-		{"storytel", p.Storytel},
-		{"bookbeat", p.BookBeat},
-		{"audioteka", p.Audioteka},
-		{"audiobookcovers", p.AudiobookCovers},
+// Sources returns the current search fan-out.
+func (p *Provider) Sources() SourceConfig {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.sources
+}
+
+type searchTask struct {
+	name string
+	fn   searchProvider
+}
+
+// searchTasks lists the enabled sources in fan-out order.
+func (p *Provider) searchTasks() []searchTask {
+	cfg := p.Sources()
+	all := []struct {
+		name    string
+		enabled bool
+		fn      searchProvider
+	}{
+		{"audnexus", cfg.Audnexus, p.Audnexus},
+		{"audimeta", cfg.AudiMeta, p.AudiMeta},
+		{"itunes", cfg.ITunes, p.ITunes},
+		{"audible", cfg.Audible, p.Audible},
+		{"storytel", cfg.Storytel, p.Storytel},
+		{"bookbeat", cfg.BookBeat, p.BookBeat},
+		{"audioteka", cfg.Audioteka, p.Audioteka},
+		{"audiobookcovers", cfg.AudiobookCovers, p.AudiobookCovers},
+	}
+	tasks := make([]searchTask, 0, len(all))
+	for _, t := range all {
+		if t.enabled {
+			tasks = append(tasks, searchTask{name: t.name, fn: t.fn})
+		}
+	}
+	return tasks
+}
+
+// Search queries the enabled sources in parallel (up to searchWorkers
+// concurrent goroutines) and returns the merged results. A source that
+// fails is logged; the search only reports an error when every source
+// failed and none returned a match.
+func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
+	tasks := p.searchTasks()
+	if len(tasks) == 0 {
+		return nil, nil
 	}
 
 	type result struct {
