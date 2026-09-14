@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,8 +79,12 @@ func (s *AudibleScraper) baseURL() string {
 	return "https://www.audible" + s.tld()
 }
 
-// Search fetches the Audible search page, extracts up to maxDetailFetches
-// ASINs, and scrapes each product page for metadata.
+// Search fetches one Audible search results page and returns a thin match
+// per listed product: ASIN, title, cover, and whatever the card states
+// (author, narrator, runtime). Product pages are not scraped here. Each page
+// costs a token from a six-per-minute bucket, so the old search-plus-three-
+// product-pages design took about twenty seconds; the host resolves the
+// winning candidate through Fetch, which reads the product page once.
 func (s *AudibleScraper) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
 	if asin := q.ProviderIDs["asin"]; asin != "" {
 		m, err := s.Fetch(ctx, asin)
@@ -93,29 +98,15 @@ func (s *AudibleScraper) Search(ctx context.Context, q metadata.SearchQuery) ([]
 		return nil, nil
 	}
 
-	asins, err := s.searchASINs(ctx, q)
-	if err != nil {
+	doc, err := s.searchDoc(ctx, q)
+	if err != nil || doc == nil {
 		return nil, err
 	}
-
-	const maxDetailFetches = 3
-	if len(asins) > maxDetailFetches {
-		asins = asins[:maxDetailFetches]
-	}
-
-	var results []metadata.Match
-	for _, asin := range asins {
-		m, err := s.Fetch(ctx, asin)
-		if err != nil {
-			// Non-fatal: log and continue.
-			continue
-		}
-		if m != nil {
-			results = append(results, *m)
-		}
-	}
-	return results, nil
+	return parseSearchResults(doc, maxSearchResults), nil
 }
+
+// maxSearchResults caps the thin matches returned from one results page.
+const maxSearchResults = 5
 
 // Fetch scrapes the Audible product page for the given ASIN.
 func (s *AudibleScraper) Fetch(ctx context.Context, asin string) (*metadata.Match, error) {
@@ -136,8 +127,8 @@ func (s *AudibleScraper) Fetch(ctx context.Context, asin string) (*metadata.Matc
 	return s.parseProductPage(doc, asin), nil
 }
 
-// searchASINs fetches the search results page and returns ASIN strings.
-func (s *AudibleScraper) searchASINs(ctx context.Context, q metadata.SearchQuery) ([]string, error) {
+// searchDoc fetches the search results page for the query.
+func (s *AudibleScraper) searchDoc(ctx context.Context, q metadata.SearchQuery) (*goquery.Document, error) {
 	if err := waitForLimiter(ctx, s.limiter); err != nil {
 		return nil, err
 	}
@@ -158,32 +149,82 @@ func (s *AudibleScraper) searchASINs(ctx context.Context, q metadata.SearchQuery
 	}
 
 	searchURL := s.baseURL() + "/search?keywords=" + url.QueryEscape(term)
-	doc, err := s.fetchDoc(ctx, searchURL)
-	if err != nil {
-		return nil, err
-	}
+	return s.fetchDoc(ctx, searchURL)
+}
 
-	var asins []string
+// parseSearchResults reads the product cards on a search results page. A
+// card carries the ASIN in its product link, the title as its heading, the
+// cover image, and "By:", "Narrated by:" and "Length:" lines.
+func parseSearchResults(doc *goquery.Document, limit int) []metadata.Match {
+	var results []metadata.Match
 	seen := make(map[string]bool)
+	doc.Find("[data-widget='productList'] li.productListItem").EachWithBreak(func(_ int, card *goquery.Selection) bool {
+		asin := ""
+		card.Find("a[href*='/pd/']").EachWithBreak(func(_ int, a *goquery.Selection) bool {
+			href, _ := a.Attr("href")
+			if m := asinPathRE.FindStringSubmatch(href); len(m) >= 2 {
+				asin = m[1]
+				return false
+			}
+			return true
+		})
+		if asin == "" || seen[asin] {
+			return true
+		}
+		seen[asin] = true
 
-	// Select product links: [data-widget='productList'] a[href*='/pd/']
-	doc.Find("[data-widget='productList'] a[href*='/pd/']").Each(func(_ int, sel *goquery.Selection) {
-		href, exists := sel.Attr("href")
-		if !exists {
-			return
+		title := strings.TrimSpace(card.Find("h3").First().Text())
+		if title == "" {
+			title = strings.TrimSpace(card.AttrOr("aria-label", ""))
 		}
-		m := asinPathRE.FindStringSubmatch(href)
-		if len(m) < 2 {
-			return
+		cover := card.Find("img").First().AttrOr("src", "")
+
+		m := metadata.Match{
+			Provider:   "audible",
+			ProviderID: asin,
+			ASIN:       asin,
+			Title:      title,
+			CoverURL:   cover,
 		}
-		asin := m[1]
-		if !seen[asin] {
-			seen[asin] = true
-			asins = append(asins, asin)
-		}
+		card.Find("li").Each(func(_ int, li *goquery.Selection) {
+			text := strings.TrimSpace(strings.Join(strings.Fields(li.Text()), " "))
+			switch {
+			case strings.HasPrefix(text, "By:"):
+				m.Authors = splitAudibleNames(strings.TrimPrefix(text, "By:"))
+			case strings.HasPrefix(text, "Narrated by:"):
+				m.Narrators = splitAudibleNames(strings.TrimPrefix(text, "Narrated by:"))
+			case strings.HasPrefix(text, "Length:"):
+				m.DurationMin = parseAudibleLength(strings.TrimPrefix(text, "Length:"))
+			}
+		})
+		results = append(results, m)
+		return limit <= 0 || len(results) < limit
 	})
+	return results
+}
 
-	return asins, nil
+// splitAudibleNames splits "A, B, and C" style name lists from a card line.
+func splitAudibleNames(text string) []string {
+	var out []string
+	for _, part := range strings.Split(strings.ReplaceAll(text, " and ", ","), ",") {
+		if name := strings.TrimSpace(part); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+var audibleLengthRE = regexp.MustCompile(`(?:(\d+)\s*hrs?)?\s*(?:and\s*)?(?:(\d+)\s*mins?)?`)
+
+// parseAudibleLength reads "15 hrs and 40 mins" style runtimes into minutes.
+func parseAudibleLength(text string) int {
+	m := audibleLengthRE.FindStringSubmatch(strings.TrimSpace(text))
+	if len(m) < 3 {
+		return 0
+	}
+	hours, _ := strconv.Atoi(m[1])
+	mins, _ := strconv.Atoi(m[2])
+	return hours*60 + mins
 }
 
 // jsonLdNode is a minimally-typed JSON-LD node for Audible pages.

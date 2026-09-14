@@ -7,22 +7,47 @@ import (
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
-func TestRuntimeServerConfigure_NoOp(t *testing.T) {
+func TestRuntimeServerConfigureAppliesSources(t *testing.T) {
 	server := &runtimeServer{provider: provider.NewProvider()}
 
-	_, err := server.Configure(context.Background(), &pluginv1.ConfigureRequest{})
-	if err != nil {
+	// No config: defaults stand.
+	if _, err := server.Configure(context.Background(), &pluginv1.ConfigureRequest{}); err != nil {
 		t.Fatalf("Configure() returned error: %v", err)
 	}
-
-	p, err := server.providerForRequest()
-	if err != nil {
-		t.Fatalf("providerForRequest() returned error: %v", err)
+	if got := server.provider.Sources(); got != provider.DefaultSourceConfig() {
+		t.Fatalf("Sources() after empty Configure = %+v", got)
 	}
-	if p == nil {
-		t.Fatal("expected provider to be available")
+
+	// A partial "sources" entry overrides only the keys it names.
+	value, err := structpb.NewStruct(map[string]any{"audible": true, "itunes": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Configure(context.Background(), &pluginv1.ConfigureRequest{
+		Config: []*pluginv1.ConfigEntry{{Key: "sources", Value: value}},
+	}); err != nil {
+		t.Fatalf("Configure() returned error: %v", err)
+	}
+	got := server.provider.Sources()
+	want := provider.DefaultSourceConfig()
+	want.Audible = true
+	want.ITunes = false
+	if got != want {
+		t.Fatalf("Sources() = %+v, want %+v", got, want)
+	}
+
+	// Entries under other keys are ignored.
+	other, _ := structpb.NewStruct(map[string]any{"audnexus": false})
+	if _, err := server.Configure(context.Background(), &pluginv1.ConfigureRequest{
+		Config: []*pluginv1.ConfigEntry{{Key: "account", Value: other}},
+	}); err != nil {
+		t.Fatalf("Configure() returned error: %v", err)
+	}
+	if got := server.provider.Sources(); !got.Audnexus {
+		t.Fatalf("unrelated config key changed sources: %+v", got)
 	}
 }
 

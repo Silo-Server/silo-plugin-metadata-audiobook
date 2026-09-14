@@ -45,8 +45,36 @@ func (s *runtimeServer) GetManifest(context.Context, *pluginv1.GetManifestReques
 	return &pluginv1.GetManifestResponse{Manifest: s.manifest}, nil
 }
 
-func (s *runtimeServer) Configure(_ context.Context, _ *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
+// Configure applies the "sources" global config. A missing or partial entry
+// leaves the defaults in place for the keys it does not name.
+func (s *runtimeServer) Configure(_ context.Context, req *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
+	s.provider.SetSources(sourceConfigFromEntries(req.GetConfig()))
 	return &pluginv1.ConfigureResponse{}, nil
+}
+
+// sourceConfigFromEntries reads the "sources" config entry over the defaults.
+func sourceConfigFromEntries(entries []*pluginv1.ConfigEntry) provider.SourceConfig {
+	cfg := provider.DefaultSourceConfig()
+	for _, entry := range entries {
+		if entry == nil || entry.GetKey() != "sources" || entry.GetValue() == nil {
+			continue
+		}
+		values := entry.GetValue().AsMap()
+		set := func(key string, target *bool) {
+			if v, ok := values[key].(bool); ok {
+				*target = v
+			}
+		}
+		set("audnexus", &cfg.Audnexus)
+		set("audimeta", &cfg.AudiMeta)
+		set("itunes", &cfg.ITunes)
+		set("audible", &cfg.Audible)
+		set("storytel", &cfg.Storytel)
+		set("bookbeat", &cfg.BookBeat)
+		set("audioteka", &cfg.Audioteka)
+		set("audiobookcovers", &cfg.AudiobookCovers)
+	}
+	return cfg
 }
 
 func (s *runtimeServer) providerForRequest() (*provider.Provider, error) {
