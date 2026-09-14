@@ -272,6 +272,17 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	tctx, cancel := context.WithTimeout(ctx, providerTimeout)
 	defer cancel()
 
+	match, err := p.fetchPrimary(tctx, q)
+	if match != nil {
+		p.backfillCover(tctx, match, q)
+	}
+	return match, err
+}
+
+// fetchPrimary resolves the best metadata match by provider hint, then by ASIN
+// fallback. It returns the first source that responds regardless of whether
+// that match carries a cover.
+func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*metadata.Match, error) {
 	// Dispatch by explicit legacy hint or by the real provider-specific IDs
 	// stored in ProviderIDs.
 	providerHint := providerHintFromIDs(q.ProviderIDs)
@@ -332,6 +343,45 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	}
 
 	return nil, nil
+}
+
+// backfillCover fills a missing cover from cover-bearing sources. The primary
+// match may carry full text metadata but no cover image, and the host has no
+// GetImages fallback for this plugin, so the cover must travel on the match
+// itself. AudiobookCovers is a dedicated cover source; Audnexus and AudiMeta
+// also carry art. The first cover found for the ASIN is grafted on.
+//
+// The extra fetches run sequentially and only when the primary match has no
+// cover; parallelize if this becomes a latency hotspot.
+func (p *Provider) backfillCover(ctx context.Context, match *metadata.Match, q metadata.SearchQuery) {
+	if match == nil || strings.TrimSpace(match.CoverURL) != "" {
+		return
+	}
+	asin := firstProviderID(q.ProviderIDs, "asin", "audnexus", "audimeta", "audible")
+	if asin == "" {
+		if id := firstProviderID(q.ProviderIDs, capabilityProviderID); isLikelyASIN(id) {
+			asin = id
+		}
+	}
+	if asin == "" {
+		return
+	}
+	type coverSource interface {
+		Fetch(context.Context, string) (*metadata.Match, error)
+	}
+	for _, src := range []coverSource{p.AudiobookCovers, p.Audnexus, p.AudiMeta} {
+		if src == nil {
+			continue
+		}
+		alt, err := src.Fetch(ctx, asin)
+		if err != nil || alt == nil {
+			continue
+		}
+		if cover := strings.TrimSpace(alt.CoverURL); cover != "" {
+			match.CoverURL = cover
+			return
+		}
+	}
 }
 
 func providerHintFromIDs(ids map[string]string) string {
