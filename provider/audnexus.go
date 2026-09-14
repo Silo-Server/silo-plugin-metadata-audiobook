@@ -223,7 +223,9 @@ func (c *AudnexusClient) Fetch(ctx context.Context, asin string) (*metadata.Matc
 
 	reqURL := c.baseURL + "/books/" + url.PathEscape(strings.ToUpper(asin)) + "?region=us"
 	body, err := c.get(ctx, reqURL)
-	if err != nil {
+	if err != nil || body == nil {
+		// get() reports an unknown/delisted ASIN as (nil, nil); decoding that
+		// nil body would surface as a bogus JSON error instead of "no match".
 		return nil, err
 	}
 
