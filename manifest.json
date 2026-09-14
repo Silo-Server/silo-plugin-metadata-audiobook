@@ -6,7 +6,7 @@
   "presentation": {
     "display_name": "Audiobook Metadata",
     "summary": "Fetch audiobook metadata and artwork from multiple book and audiobook sources.",
-    "description_markdown": "Matches audiobook items against Audnexus and Apple Books by default, with Audible, Storytel, BookBeat, Audioteka and AudiobookCovers available as optional sources. It combines those sources into metadata and artwork for Silo audiobook libraries.",
+    "description_markdown": "Matches audiobook items against Audnexus, Apple Books, and AudiobookCovers by default, with Audible, Storytel, BookBeat, Audioteka, and AudiMeta available as optional sources. It combines those sources into metadata and artwork for Silo audiobook libraries.",
     "setup_markdown": "Install the plugin and add **Audiobook Metadata** to the metadata provider chain for an audiobook library. Audnexus, Apple Books and AudiobookCovers are searched by default; the scrapers can be switched on in the plugin settings.",
     "homepage_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook",
     "source_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook",
@@ -35,7 +35,7 @@
       "type": "metadata_provider.v1",
       "id": "audiobook-metadata",
       "display_name": "Audiobook Metadata",
-      "description": "Metadata provider for audiobook items. Searches Audnexus and Apple Books by default; Audible, Storytel, BookBeat, Audioteka, AudiobookCovers and AudiMeta are configurable.",
+      "description": "Metadata provider for audiobook items. Searches Audnexus, Apple Books, and AudiobookCovers by default; Audible, Storytel, BookBeat, Audioteka, and AudiMeta can be enabled in the plugin settings.",
       "metadata": {
         "default_priority": {
           "audiobook": 2
