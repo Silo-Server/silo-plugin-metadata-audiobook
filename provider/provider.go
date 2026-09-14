@@ -349,9 +349,9 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 // match may carry full text metadata but no cover image, and the host has no
 // GetImages fallback for this plugin, so the cover must travel on the match
 // itself. AudiobookCovers is a dedicated cover source; Audnexus and AudiMeta
-// also carry art. We graft the first cover found for the ASIN.
+// also carry art. The first cover found for the ASIN is grafted on.
 //
-// ponytail: sequential extra fetches, only when the primary match has no
+// The extra fetches run sequentially and only when the primary match has no
 // cover; parallelize if this becomes a latency hotspot.
 func (p *Provider) backfillCover(ctx context.Context, match *metadata.Match, q metadata.SearchQuery) {
 	if match == nil || strings.TrimSpace(match.CoverURL) != "" {
