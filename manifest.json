@@ -56,56 +56,56 @@
           {
             "key": "audnexus",
             "label": "Audnexus",
-            "description": "Public API backed by Audible's catalog. Fast, returns narrators, series and cover art.",
+            "description": "Public API over Audible's catalog. Returns narrators, series, and cover art; answers in well under a second.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": true
           },
           {
             "key": "itunes",
             "label": "Apple Books",
-            "description": "Public iTunes Search API. Fast, good coverage, no narrator field.",
+            "description": "Public iTunes Search API. Answers in about a second and has no narrator field.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": true
           },
           {
             "key": "audiobookcovers",
             "label": "AudiobookCovers.com",
-            "description": "Cover art by ASIN only; fills in a missing cover.",
+            "description": "Cover art looked up by ASIN. Fills in a cover when the matched source has none.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": true
           },
           {
             "key": "audible",
             "label": "Audible (scraper)",
-            "description": "Parses Audible search pages. Throttled to six requests per minute.",
+            "description": "Parses Audible search pages. Limited to six requests per minute.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": false
           },
           {
             "key": "storytel",
             "label": "Storytel (scraper)",
-            "description": "Parses Storytel catalog pages. Throttled to six requests per minute.",
+            "description": "Parses Storytel catalog pages. Limited to six requests per minute.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": false
           },
           {
             "key": "bookbeat",
             "label": "BookBeat (scraper)",
-            "description": "Parses BookBeat catalog pages. Throttled to six requests per minute.",
+            "description": "Parses BookBeat catalog pages. Limited to six requests per minute.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": false
           },
           {
             "key": "audioteka",
             "label": "Audioteka (scraper)",
-            "description": "Parses Audioteka catalog pages. Throttled to six requests per minute.",
+            "description": "Parses Audioteka catalog pages. Limited to six requests per minute.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": false
           },
           {
             "key": "audimeta",
             "label": "AudiMeta",
-            "description": "The hosted API was shut down in March 2026 and now answers 403. Left for self-hosted deployments.",
+            "description": "The hosted API shut down in March 2026 and answers 403. Kept for self-hosted deployments.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": false
           }
