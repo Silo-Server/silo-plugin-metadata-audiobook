@@ -207,3 +207,23 @@ func TestStripHTML(t *testing.T) {
 		}
 	}
 }
+
+// A 404 from the ASIN route means "no such book", which get() reports as a nil
+// body. Decoding that nil body produced a bogus JSON error instead.
+func TestAudnexusFetchUnknownASINReturnsNoMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAudnexusClient()
+	client.baseURL = srv.URL
+
+	match, err := client.Fetch(context.Background(), "B0000000000")
+	if err != nil {
+		t.Fatalf("Fetch error: %v", err)
+	}
+	if match != nil {
+		t.Fatalf("match = %+v, want nil", match)
+	}
+}
