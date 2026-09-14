@@ -130,6 +130,67 @@ func TestAudnexusTitleSearch(t *testing.T) {
 	}
 }
 
+// The title search hit /books?q= for as long as this client existed, which is
+// not a route on api.audnex.us -- it answers with a 404 "Route not found". Every
+// title search failed silently for exactly the audiobooks that had no ASIN yet.
+//
+// It survived because the other tests' stub server answers any path, so the
+// wrong URL still returned the fixture. This one asserts the path itself.
+func TestAudnexusSearchUsesTheBooksSearchRoute(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/audnexus_book.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[" + string(fixture) + "]"))
+	}))
+	defer srv.Close()
+
+	client := NewAudnexusClient()
+	client.baseURL = srv.URL
+
+	if _, err := client.Search(context.Background(), metadata.SearchQuery{Title: "Hitchhiker"}); err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if gotPath != "/books/search" {
+		t.Errorf("requested path = %q, want %q -- /books is a 404 on the real API", gotPath, "/books/search")
+	}
+	if gotQuery != "Hitchhiker" {
+		t.Errorf("q = %q, want %q", gotQuery, "Hitchhiker")
+	}
+}
+
+// An ASIN must still resolve through /books/{asin}, not the search route.
+func TestAudnexusSearchByASINUsesTheFetchRoute(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/audnexus_book.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(fixture)
+	}))
+	defer srv.Close()
+
+	client := NewAudnexusClient()
+	client.baseURL = srv.URL
+
+	q := metadata.SearchQuery{ProviderIDs: map[string]string{"asin": "B0182NWM9I"}}
+	if _, err := client.Search(context.Background(), q); err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if gotPath != "/books/B0182NWM9I" {
+		t.Errorf("requested path = %q, want /books/B0182NWM9I", gotPath)
+	}
+}
+
 func TestStripHTML(t *testing.T) {
 	tests := []struct {
 		in   string

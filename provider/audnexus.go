@@ -158,10 +158,9 @@ func NewAudnexusClient() *AudnexusClient {
 	}
 }
 
-// Search returns a Match when q.ProviderIDs["asin"] is set.
-// Audnexus provides no general title search endpoint.
+// Search resolves by ASIN when q.ProviderIDs["asin"] is set, and otherwise by
+// title against the /books/search endpoint.
 func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
-	// Title-based search: use /books?q= endpoint (returns array of books).
 	if asin := q.ProviderIDs["asin"]; asin != "" {
 		m, err := c.Fetch(ctx, asin)
 		if err != nil || m == nil {
@@ -179,10 +178,17 @@ func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]
 		return nil, err
 	}
 
+	// The title-search route is /books/search, not /books. /books?q= is not a
+	// route at all: api.audnex.us answers it with
+	// {"message":"Route GET:/books?q=... not found","statusCode":404}, so every
+	// title search this client issued failed, silently, for every audiobook
+	// that had no ASIN yet -- which is exactly the population that needs one.
+	// Verified 2026-07-27 against 20 unidentified production audiobooks: the
+	// old path returned 404 on all 20, the correct path answered 18.
 	params := url.Values{}
 	params.Set("q", q.Title)
 	params.Set("region", "us")
-	reqURL := c.baseURL + "/books?" + params.Encode()
+	reqURL := c.baseURL + "/books/search?" + params.Encode()
 
 	body, err := c.get(ctx, reqURL)
 	if err != nil {
