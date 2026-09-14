@@ -1,6 +1,11 @@
 package provider
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestProviderHintFromIDs(t *testing.T) {
 	tests := []struct {
@@ -115,5 +120,70 @@ func TestIsLikelyAudibleASIN(t *testing.T) {
 				t.Fatalf("isLikelyAudibleASIN(%q) = %t, want %t", tt.value, got, tt.want)
 			}
 		})
+	}
+}
+
+// silo-server classifies our error by pattern-matching its text: a bare 401 or
+// 403 anywhere in the message marks the ITEM permanent and parks it 30 days.
+// audimeta answers 403 to every request, so leaking its status code condemned
+// items for a reason that says nothing about them. Assert the summary names the
+// providers without quoting their status codes.
+func TestProvidersFailedErrorHidesStatusCodes(t *testing.T) {
+	err := &ProvidersFailedError{Failures: []ProviderFailure{
+		{Provider: "audimeta", Kind: FailureBlocked, Err: errors.New("audimeta: HTTP 403")},
+		{Provider: "itunes", Kind: FailureUnavailable, Err: errors.New("itunes: HTTP 503")},
+	}}
+
+	msg := err.Error()
+	for _, banned := range []string{"401", "403", "forbidden", "unauthorized"} {
+		if strings.Contains(strings.ToLower(msg), banned) {
+			t.Fatalf("error text leaks %q, which the host reads as permanent: %s", banned, msg)
+		}
+	}
+	if !strings.Contains(msg, "audimeta (blocked)") {
+		t.Errorf("summary should name the provider and kind, got: %s", msg)
+	}
+	if !strings.Contains(msg, "itunes (unavailable)") {
+		t.Errorf("summary should name every failure, got: %s", msg)
+	}
+	// The detail must stay reachable in-process for logging and tests.
+	if len(err.Unwrap()) != 2 {
+		t.Errorf("Unwrap should expose both underlying errors")
+	}
+}
+
+func TestProvidersFailedErrorRateLimitedDetection(t *testing.T) {
+	blocked := &ProvidersFailedError{Failures: []ProviderFailure{
+		{Provider: "audimeta", Kind: FailureBlocked},
+	}}
+	if blocked.RateLimited() {
+		t.Error("a blocked provider is not rate limiting")
+	}
+	throttled := &ProvidersFailedError{Failures: []ProviderFailure{
+		{Provider: "audimeta", Kind: FailureBlocked},
+		{Provider: "audible", Kind: FailureRateLimited},
+	}}
+	if !throttled.RateLimited() {
+		t.Error("one throttled provider should ask for the longer backoff")
+	}
+}
+
+func TestClassifyFailure(t *testing.T) {
+	cases := []struct {
+		in   error
+		want FailureKind
+	}{
+		{errors.New("audimeta: HTTP 403"), FailureBlocked},
+		{errors.New("audnexus: HTTP 401"), FailureBlocked},
+		{errors.New("itunes: HTTP 429"), FailureRateLimited},
+		// Our own limiter refusing, not the provider throttling us.
+		{errors.New("rate: Wait(n=1) would exceed context deadline"), FailureRateLimited},
+		{context.DeadlineExceeded, FailureTimeout},
+		{errors.New("storytel: HTTP 503"), FailureUnavailable},
+	}
+	for _, c := range cases {
+		if got := classifyFailure(c.in); got != c.want {
+			t.Errorf("classifyFailure(%v) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

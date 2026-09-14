@@ -4,7 +4,7 @@ go 1.26.0
 
 require google.golang.org/protobuf v1.36.11
 
-require google.golang.org/grpc v1.75.1 // indirect
+require google.golang.org/grpc v1.75.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
