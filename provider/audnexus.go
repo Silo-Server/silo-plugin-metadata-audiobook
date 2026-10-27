@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -34,20 +35,20 @@ type AudnexusClient struct {
 
 // audnexusBook is the JSON shape returned by GET /books/{asin}.
 type audnexusBook struct {
-	ASIN             string              `json:"asin"`
-	Title            string              `json:"title"`
-	Subtitle         string              `json:"subtitle"`
-	Authors          []audnexusPerson    `json:"authors"`
-	Narrators        []audnexusPerson    `json:"narrators"`
-	Publisher        string              `json:"publisher"`
-	ReleaseDate      string              `json:"releaseDate"`
-	RuntimeLengthMin int                 `json:"runtimeLengthMin"`
-	Description      string              `json:"description"`
-	Summary          string              `json:"summary"`
-	Image            string              `json:"image"`
-	Genres           []audnexusGenre     `json:"genres"`
-	Series           []audnexusSeries    `json:"series"`
-	Language         string              `json:"language"`
+	ASIN             string           `json:"asin"`
+	Title            string           `json:"title"`
+	Subtitle         string           `json:"subtitle"`
+	Authors          []audnexusPerson `json:"authors"`
+	Narrators        []audnexusPerson `json:"narrators"`
+	Publisher        string           `json:"publisher"`
+	ReleaseDate      string           `json:"releaseDate"`
+	RuntimeLengthMin int              `json:"runtimeLengthMin"`
+	Description      string           `json:"description"`
+	Summary          string           `json:"summary"`
+	Image            string           `json:"image"`
+	Genres           []audnexusGenre  `json:"genres"`
+	Series           []audnexusSeries `json:"series"`
+	Language         string           `json:"language"`
 }
 
 type audnexusPerson struct {
@@ -64,20 +65,22 @@ type audnexusSeries struct {
 	Position string `json:"position"`
 }
 
-var htmlTagRE = regexp.MustCompile(`<[^>]+>`)
+var (
+	htmlTagRE = regexp.MustCompile(`<[^>]+>`)
+	// Block-level tags separate sentences; dropping them outright glued
+	// "originality.</p><p>Read by" into "originality.Read by".
+	htmlBlockTagRE = regexp.MustCompile(`(?i)<\s*/?\s*(p|br|div|li|ul|ol|h[1-6])\b[^>]*>`)
+	spaceRunRE     = regexp.MustCompile(`[ \t]{2,}`)
+)
 
 func stripHTML(s string) string {
+	s = htmlBlockTagRE.ReplaceAllString(s, " ")
 	s = htmlTagRE.ReplaceAllString(s, "")
-	// Normalise common HTML entities.
-	replacer := strings.NewReplacer(
-		"&amp;", "&",
-		"&lt;", "<",
-		"&gt;", ">",
-		"&quot;", `"`,
-		"&#39;", "'",
-		"&nbsp;", " ",
-	)
-	return strings.TrimSpace(replacer.Replace(s))
+	// Decode every entity, numeric ones (&#xa0;, &#8220;) included.
+	s = html.UnescapeString(s)
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = spaceRunRE.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
 }
 
 func extractYear(dateStr string) int {
