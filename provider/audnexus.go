@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -27,7 +28,8 @@ import (
 //
 // Audnexus has no general book-title search — only ASIN-based lookups.
 // Search() returns results only when q.ProviderIDs["asin"] is set.
-// Rate limit: 100 requests/minute.
+// Rate limit: DefaultAudnexusPerMinute requests a minute until the host sets
+// another one (SetRequestsPerMinute).
 type AudnexusClient struct {
 	httpClient *http.Client
 	baseURL    string
@@ -156,13 +158,45 @@ func bookFromAudnexus(b audnexusBook) metadata.Match {
 	}
 }
 
-// NewAudnexusClient creates an Audnexus client with a 100 rpm rate limiter.
+const (
+	// DefaultAudnexusPerMinute is the Audnexus request rate until an admin
+	// sets one. It leaves most of the public API's allowance unused, so a
+	// server does not lean on a free community service by default.
+	DefaultAudnexusPerMinute = 100
+	// MaxAudnexusPerMinute is the highest rate an admin can set: the public
+	// api.audnex.us advertises 300 requests a minute for each address
+	// (x-ratelimit-limit) and answers 429 beyond it.
+	MaxAudnexusPerMinute = 300
+	// MinAudnexusPerMinute is the lowest. A request waits on the limiter
+	// inside providerTimeout, and the limiter refuses at once a wait that
+	// would outlast it. At 20 a minute a request is three seconds behind the
+	// one before it, so a few lookups arriving together still fit; a rate of
+	// one or two a minute would fail them instead of slowing them down.
+	MinAudnexusPerMinute = 20
+)
+
+// NewAudnexusClient creates an Audnexus client limited to
+// DefaultAudnexusPerMinute requests a minute.
 func NewAudnexusClient() *AudnexusClient {
 	return &AudnexusClient{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    "https://api.audnex.us",
-		limiter:    newLimiter(100),
+		limiter:    newLimiter(DefaultAudnexusPerMinute),
 	}
+}
+
+// SetRequestsPerMinute changes the request rate, kept between
+// MinAudnexusPerMinute and MaxAudnexusPerMinute. Safe to call while requests
+// wait on the limiter: a request already waiting keeps the slot it was given,
+// and requests after it are spaced at the new rate.
+func (c *AudnexusClient) SetRequestsPerMinute(perMinute int) {
+	perMinute = min(max(perMinute, MinAudnexusPerMinute), MaxAudnexusPerMinute)
+	c.limiter.SetLimit(rate.Limit(float64(perMinute) / 60.0))
+}
+
+// RequestsPerMinute returns the current request rate.
+func (c *AudnexusClient) RequestsPerMinute() int {
+	return int(math.Round(float64(c.limiter.Limit()) * 60.0))
 }
 
 // Search resolves by ASIN when q.ProviderIDs["asin"] is set and Audnexus has

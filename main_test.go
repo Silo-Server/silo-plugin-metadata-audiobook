@@ -51,6 +51,46 @@ func TestRuntimeServerConfigureAppliesSources(t *testing.T) {
 	}
 }
 
+// The "limits" entry sets the Audnexus request rate. A missing entry, or a
+// value that is not a whole number of at least one, leaves the default; a
+// value outside the supported range is brought to its nearest end.
+func TestConfigureSetsAudnexusRate(t *testing.T) {
+	server := &runtimeServer{provider: provider.NewProvider()}
+	configure := func(value any) int {
+		t.Helper()
+		req := &pluginv1.ConfigureRequest{}
+		if value != nil {
+			limits, err := structpb.NewStruct(map[string]any{"audnexus_per_minute": value})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Config = []*pluginv1.ConfigEntry{{Key: "limits", Value: limits}}
+		}
+		if _, err := server.Configure(context.Background(), req); err != nil {
+			t.Fatalf("Configure() returned error: %v", err)
+		}
+		return server.provider.Audnexus.RequestsPerMinute()
+	}
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  int
+	}{
+		{"no entry", nil, provider.DefaultAudnexusPerMinute},
+		{"set", 280, 280},
+		{"entry removed again", nil, provider.DefaultAudnexusPerMinute},
+		{"above the source's allowance", 5000, provider.MaxAudnexusPerMinute},
+		{"too slow for a request's deadline", 2, provider.MinAudnexusPerMinute},
+		{"zero", 0, provider.DefaultAudnexusPerMinute},
+		{"fraction", 2.5, provider.DefaultAudnexusPerMinute},
+		{"not a number", "fast", provider.DefaultAudnexusPerMinute},
+	} {
+		if got := configure(tc.value); got != tc.want {
+			t.Errorf("%s: Audnexus rate = %d a minute, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestMetadataServerGetMetadata_ReturnsNilForUnknown(t *testing.T) {
 	rs := &runtimeServer{provider: provider.NewProvider()}
 	ms := &metadataServer{runtime: rs}

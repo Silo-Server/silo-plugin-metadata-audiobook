@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -45,11 +46,28 @@ func (s *runtimeServer) GetManifest(context.Context, *pluginv1.GetManifestReques
 	return &pluginv1.GetManifestResponse{Manifest: s.manifest}, nil
 }
 
-// Configure applies the "sources" global config. A missing or partial entry
-// leaves the defaults in place for the keys it does not name.
+// Configure applies the "sources" and "limits" global config. A missing or
+// partial entry leaves the defaults in place for the keys it does not name.
 func (s *runtimeServer) Configure(_ context.Context, req *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
 	s.provider.SetSources(sourceConfigFromEntries(req.GetConfig()))
+	s.provider.Audnexus.SetRequestsPerMinute(audnexusPerMinuteFromEntries(req.GetConfig()))
 	return &pluginv1.ConfigureResponse{}, nil
+}
+
+// audnexusPerMinuteFromEntries reads audnexus_per_minute from the "limits"
+// config entry, or the default when it is absent or not a whole number of at
+// least one. The client keeps it inside the range it supports.
+func audnexusPerMinuteFromEntries(entries []*pluginv1.ConfigEntry) int {
+	perMinute := provider.DefaultAudnexusPerMinute
+	for _, entry := range entries {
+		if entry == nil || entry.GetKey() != "limits" || entry.GetValue() == nil {
+			continue
+		}
+		if v, ok := entry.GetValue().AsMap()["audnexus_per_minute"].(float64); ok && v >= 1 && v == math.Trunc(v) {
+			perMinute = int(min(v, provider.MaxAudnexusPerMinute))
+		}
+	}
+	return perMinute
 }
 
 // sourceConfigFromEntries reads the "sources" config entry over the defaults.
