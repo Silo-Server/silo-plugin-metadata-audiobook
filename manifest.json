@@ -114,6 +114,25 @@
           }
         ]
       }
+    },
+    {
+      "key": "limits",
+      "title": "Request limits",
+      "description": "How often the plugin may call a source. A higher limit matches a large library sooner. Keep it under what the source allows.",
+      "json_schema": "{\"type\":\"object\",\"properties\":{\"audnexus_per_minute\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":300}},\"additionalProperties\":false}",
+      "required": false,
+      "admin_form": {
+        "submit_label": "Save request limits",
+        "fields": [
+          {
+            "key": "audnexus_per_minute",
+            "label": "Audnexus requests per minute",
+            "description": "Default 100. The public Audnexus API allows 300 a minute for each address, shared by everything that calls it from this server's address.",
+            "control": "ADMIN_FORM_CONTROL_NUMBER",
+            "default_value": 100
+          }
+        ]
+      }
     }
   ]
 }

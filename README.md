@@ -17,9 +17,15 @@ on the item), whether or not it is enabled for title searches.
 
 ## Configuration
 
-One global setting, **Search sources**, with a switch per source. Install the
-plugin, add **Audiobook Metadata** to an audiobook library's metadata provider
-chain, and adjust the sources if the defaults miss your catalog.
+Install the plugin and add **Audiobook Metadata** to an audiobook library's
+metadata provider chain. It has two global settings:
+
+- **Search sources**: a switch per source. Adjust them if the defaults miss
+  your catalog.
+- **Request limits**: how many requests a minute the plugin sends to Audnexus,
+  100 by default. The public Audnexus API allows 300 a minute for each
+  address. A higher limit matches a large library sooner; the setting accepts
+  up to 300.
 
 ## Development
 
