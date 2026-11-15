@@ -95,6 +95,9 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 		Language:    req.GetLanguage(),
 	})
 	if err != nil {
+		if done := callerDone(ctx); done != nil {
+			return nil, done
+		}
 		return nil, searchFailureStatus(err)
 	}
 
@@ -124,8 +127,14 @@ func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetad
 		ContentType: req.GetItemType(),
 		Language:    req.GetLanguage(),
 	})
-	if err != nil || result == nil {
-		return nil, err
+	if err != nil {
+		if done := callerDone(ctx); done != nil {
+			return nil, done
+		}
+		return nil, fetchFailureStatus(err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 
 	item, err := metadataItemFromMatch(*result, req.GetItemType())
@@ -210,8 +219,9 @@ func providerIDsFromProto(value *structpb.Struct, capabilityID string, fallbackI
 // failure here is an availability problem: the item was never judged, so it
 // must stay retryable.
 //
-//	Unavailable       -> transient    (minutes)
-//	ResourceExhausted -> rate-limited (hours, which is what throttling wants)
+//	Unavailable       -> transient: the item is retried, other items go on
+//	ResourceExhausted -> rate-limited: the host stops calling this plugin for
+//	                     a while, so it is kept for a source that throttled us
 func searchFailureStatus(err error) error {
 	var failed *provider.ProvidersFailedError
 	if !errors.As(err, &failed) {
@@ -219,6 +229,32 @@ func searchFailureStatus(err error) error {
 	}
 	code := codes.Unavailable
 	if failed.RateLimited() {
+		code = codes.ResourceExhausted
+	}
+	return status.Error(code, failed.Error())
+}
+
+// callerDone reports a request the host cancelled or let expire as Canceled
+// or DeadlineExceeded. Every source fails once the request's context is done,
+// and that must not read as the sources being down. A source running into the
+// plugin's own per-source timeout is different: the request is still live,
+// and that stays a source failure.
+func callerDone(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return status.FromContextError(err).Err()
+	}
+	return nil
+}
+
+// fetchFailureStatus does the same for a record fetch. Without a code the
+// failure reaches the host as codes.Unknown and is classified by its text.
+func fetchFailureStatus(err error) error {
+	var failed *provider.FetchFailedError
+	if !errors.As(err, &failed) {
+		return err
+	}
+	code := codes.Unavailable
+	if failed.Kind == provider.FailureRateLimited {
 		code = codes.ResourceExhausted
 	}
 	return status.Error(code, failed.Error())
