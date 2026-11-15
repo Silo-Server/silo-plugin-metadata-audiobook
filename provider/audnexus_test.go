@@ -270,3 +270,31 @@ func TestAudnexusFetchNoBook(t *testing.T) {
 		})
 	}
 }
+
+// A search whose ASIN names no book still searches by title, so a wrong ASIN
+// tag does not hide a book Audnexus lists.
+func TestAudnexusSearchFallsBackToTitleWhenASINHasNoBook(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/audnexus_book.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/books/search" {
+			http.Error(w, `{"error":{"code":"CONTENT_TYPE_MISMATCH"}}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[" + string(fixture) + "]"))
+	}))
+	defer srv.Close()
+
+	client := NewAudnexusClient()
+	client.baseURL = srv.URL
+	got, err := client.Search(context.Background(), metadata.SearchQuery{
+		Title:       "Book",
+		ProviderIDs: map[string]string{"asin": "B0PODCAST1"},
+	})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Search = (%d results, %v), want the title search's one result", len(got), err)
+	}
+}

@@ -165,15 +165,19 @@ func NewAudnexusClient() *AudnexusClient {
 	}
 }
 
-// Search resolves by ASIN when q.ProviderIDs["asin"] is set, and otherwise by
-// title against the /books/search endpoint.
+// Search resolves by ASIN when q.ProviderIDs["asin"] is set and Audnexus has
+// a book for it, and otherwise by title against the /books/search endpoint.
 func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
 	if asin := q.ProviderIDs["asin"]; asin != "" {
 		m, err := c.Fetch(ctx, asin)
-		if err != nil || m == nil {
+		if err != nil {
 			return nil, err
 		}
-		return []metadata.Match{*m}, nil
+		if m != nil {
+			return []metadata.Match{*m}, nil
+		}
+		// No book under that ASIN: the tag may be wrong, so the title still
+		// gets its search.
 	}
 
 	// Fall back to title search if a title is provided.
