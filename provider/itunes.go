@@ -170,8 +170,8 @@ func (c *ITunesClient) Search(ctx context.Context, q metadata.SearchQuery) ([]me
 // candidate in the search phase, called GetMetadata for it, got nothing back --
 // without an error, so nothing looked wrong -- and recorded the item as
 // outcome=no_match. That is terminal: next_attempt_at stays NULL and
-// media_items.last_refreshed is stamped, so the item is never retried. Across
-// 3,284 enrichment attempts on this library it produced exactly zero successes.
+// media_items.last_refreshed is stamped, so the item is never retried. Every
+// enrichment attempt that went this way failed.
 func (c *ITunesClient) Fetch(ctx context.Context, id string) (*metadata.Match, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
