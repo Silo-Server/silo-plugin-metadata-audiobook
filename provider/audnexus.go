@@ -71,6 +71,8 @@ var (
 	// "originality.</p><p>Read by" into "originality.Read by".
 	htmlBlockTagRE = regexp.MustCompile(`(?i)<\s*/?\s*(p|br|div|li|ul|ol|h[1-6])\b[^>]*>`)
 	spaceRunRE     = regexp.MustCompile(`[ \t]{2,}`)
+	// A block tag beside a line break leaves a stray space on either side of it.
+	newlineSpaceRE = regexp.MustCompile(`[ \t]*(\r?\n)[ \t]*`)
 )
 
 func stripHTML(s string) string {
@@ -80,6 +82,7 @@ func stripHTML(s string) string {
 	s = html.UnescapeString(s)
 	s = strings.ReplaceAll(s, "\u00a0", " ")
 	s = spaceRunRE.ReplaceAllString(s, " ")
+	s = newlineSpaceRE.ReplaceAllString(s, "$1")
 	return strings.TrimSpace(s)
 }
 
