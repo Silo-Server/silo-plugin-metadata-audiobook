@@ -149,24 +149,26 @@ func (p *Provider) searchTasks() []searchTask {
 // fails is logged; the search only reports an error when every source
 // failed and none returned a match.
 func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
-	tasks := p.searchTasks()
+	return searchAll(ctx, p.searchTasks(), q)
+}
+
+func searchAll(ctx context.Context, tasks []searchTask, q metadata.SearchQuery) ([]metadata.Match, error) {
 	if len(tasks) == 0 {
 		return nil, nil
 	}
 
 	type result struct {
-		name    string
 		matches []metadata.Match
 		err     error
 	}
 
-	ch := make(chan result, len(tasks))
+	results := make([]result, len(tasks))
 	sem := make(chan struct{}, searchWorkers)
 
 	var wg sync.WaitGroup
-	for _, t := range tasks {
+	for i, t := range tasks {
 		wg.Add(1)
-		go func(name string, sp searchProvider) {
+		go func(i int, name string, sp searchProvider) {
 			defer wg.Done()
 
 			sem <- struct{}{}
@@ -181,25 +183,22 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 				// deliberately not forwarded verbatim to the host -- see
 				// ProvidersFailedError.Error() for why.
 				log.Printf("audiobook-metadata: provider %s search error: %v", name, err)
-				ch <- result{name: name, err: err}
-				return
 			}
-			ch <- result{name: name, matches: matches}
-		}(t.name, t.fn)
+			results[i] = result{matches: matches, err: err}
+		}(i, t.name, t.fn)
 	}
+	wg.Wait()
 
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
+	// Results keep the fan-out order, not the order the sources answered in.
+	// The host fetches candidates in the order it receives them, so a book
+	// that both Audnexus and a scraper list is fetched through Audnexus.
 	var all []metadata.Match
 	var failures []ProviderFailure
-	for r := range ch {
+	for i, r := range results {
 		all = append(all, r.matches...)
 		if r.err != nil {
 			failures = append(failures, ProviderFailure{
-				Provider: r.name,
+				Provider: tasks[i].name,
 				Kind:     classifyFailure(r.err),
 				Err:      r.err,
 			})
@@ -369,7 +368,7 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 	case "audible":
 		asin := firstProviderID(q.ProviderIDs, "asin", "audible", capabilityProviderID)
 		if asin != "" {
-			return p.Audible.Fetch(tctx, asin)
+			return p.fetchAudibleASIN(tctx, asin)
 		}
 	case "storytel":
 		if id := firstProviderID(q.ProviderIDs, "storytel", capabilityProviderID); id != "" {
@@ -390,9 +389,13 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 		}
 	}
 
-	// Fallback: if an ASIN is present, try Audnexus then AudiMeta. Only
-	// treat the capability-level ID as an ASIN when it has ASIN shape, since
-	// non-ASIN providers such as iTunes also use that field as a fallback ID.
+	// Fallback: if an ASIN is present, ask Audnexus. This is also the path a
+	// host takes when it looks a book up by the ASIN in its tags alone
+	// (lookup_provider_ids in the manifest), so an ASIN Audnexus does not
+	// know must come back as "no record", not as another source's error.
+	// AudiMeta is asked next only when it is switched on. Only treat the
+	// capability-level ID as an ASIN when it has ASIN shape, since non-ASIN
+	// providers such as iTunes also use that field as a fallback ID.
 	asin := firstProviderID(q.ProviderIDs, "asin", "audnexus", "audimeta", "audible")
 	if asin == "" {
 		if id := firstProviderID(q.ProviderIDs, capabilityProviderID); isLikelyASIN(id) {
@@ -403,17 +406,36 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 		if m, err := p.Audnexus.Fetch(tctx, asin); m != nil || err != nil {
 			return m, err
 		}
-		return p.AudiMeta.Fetch(tctx, asin)
+		if p.Sources().AudiMeta {
+			return p.AudiMeta.Fetch(tctx, asin)
+		}
 	}
 
 	return nil, nil
+}
+
+// fetchAudibleASIN resolves an Audible ID. An Audible ID is an ASIN, and
+// Audnexus serves the same catalog record through an API that answers in
+// well under a second, while the scraper is limited to one product page every
+// ten seconds. The scraper is asked only when Audnexus has no record for the
+// ASIN or cannot answer.
+func (p *Provider) fetchAudibleASIN(ctx context.Context, asin string) (*metadata.Match, error) {
+	m, err := p.Audnexus.Fetch(ctx, asin)
+	if m != nil {
+		return m, nil
+	}
+	if err != nil {
+		log.Printf("audiobook-metadata: audnexus fetch for an audible id failed, asking audible: %v", err)
+	}
+	return p.Audible.Fetch(ctx, asin)
 }
 
 // backfillCover fills a missing cover from cover-bearing sources. The primary
 // match may carry full text metadata but no cover image, and the host has no
 // GetImages fallback for this plugin, so the cover must travel on the match
 // itself. AudiobookCovers is a dedicated cover source; Audnexus and AudiMeta
-// also carry art. The first cover found for the ASIN is grafted on.
+// also carry art, and AudiMeta is asked only when it is switched on. The first
+// cover found for the ASIN is grafted on.
 //
 // The extra fetches run sequentially and only when the primary match has no
 // cover; parallelize if this becomes a latency hotspot.
@@ -433,7 +455,11 @@ func (p *Provider) backfillCover(ctx context.Context, match *metadata.Match, q m
 	type coverSource interface {
 		Fetch(context.Context, string) (*metadata.Match, error)
 	}
-	for _, src := range []coverSource{p.AudiobookCovers, p.Audnexus, p.AudiMeta} {
+	sources := []coverSource{p.AudiobookCovers, p.Audnexus}
+	if p.Sources().AudiMeta {
+		sources = append(sources, p.AudiMeta)
+	}
+	for _, src := range sources {
 		if src == nil {
 			continue
 		}

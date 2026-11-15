@@ -37,6 +37,9 @@
       "display_name": "Audiobook Metadata",
       "description": "Metadata provider for audiobook items. Searches Audnexus, Apple Books, and AudiobookCovers by default; Audible, Storytel, BookBeat, Audioteka, and AudiMeta can be enabled in the plugin settings.",
       "metadata": {
+        "lookup_provider_ids": [
+          "asin"
+        ],
         "default_priority": {
           "audiobook": 2
         }

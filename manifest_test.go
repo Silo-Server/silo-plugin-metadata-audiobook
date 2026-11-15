@@ -57,3 +57,24 @@ func TestManifestSourcesSchemaMatchesDefaults(t *testing.T) {
 		}
 	}
 }
+
+// The host asks GetMetadata for a book by the ASIN in its tags only when the
+// capability declares that key; without it every tagged book goes through a
+// search first.
+func TestManifestDeclaresASINLookup(t *testing.T) {
+	manifest, err := publicmanifest.Load(manifestJSON)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	for _, capability := range manifest.GetCapabilities() {
+		if capability.GetId() != capabilityID {
+			continue
+		}
+		keys := capability.GetMetadata().GetFields()["lookup_provider_ids"].GetListValue().GetValues()
+		if len(keys) != 1 || keys[0].GetStringValue() != "asin" {
+			t.Fatalf("lookup_provider_ids = %v, want [asin]", keys)
+		}
+		return
+	}
+	t.Fatalf("manifest has no %q capability", capabilityID)
+}
