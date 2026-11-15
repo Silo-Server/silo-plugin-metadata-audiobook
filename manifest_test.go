@@ -72,14 +72,15 @@ func TestManifestLimitsSchemaMatchesDefaults(t *testing.T) {
 		}
 		var jsonSchema struct {
 			Properties map[string]struct {
+				Minimum int `json:"minimum"`
 				Maximum int `json:"maximum"`
 			} `json:"properties"`
 		}
 		if err := json.Unmarshal([]byte(schema.GetJsonSchema()), &jsonSchema); err != nil {
 			t.Fatalf("parse json_schema: %v", err)
 		}
-		if got := jsonSchema.Properties["audnexus_per_minute"].Maximum; got != provider.MaxAudnexusPerMinute {
-			t.Errorf("schema maximum = %d, client maximum = %d", got, provider.MaxAudnexusPerMinute)
+		if got := jsonSchema.Properties["audnexus_per_minute"]; got.Minimum != provider.MinAudnexusPerMinute || got.Maximum != provider.MaxAudnexusPerMinute {
+			t.Errorf("schema range = %d to %d, client range = %d to %d", got.Minimum, got.Maximum, provider.MinAudnexusPerMinute, provider.MaxAudnexusPerMinute)
 		}
 		fields := schema.GetAdminForm().GetFields()
 		if len(fields) != 1 || fields[0].GetKey() != "audnexus_per_minute" {

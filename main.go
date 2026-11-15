@@ -56,7 +56,7 @@ func (s *runtimeServer) Configure(_ context.Context, req *pluginv1.ConfigureRequ
 
 // audnexusPerMinuteFromEntries reads audnexus_per_minute from the "limits"
 // config entry, or the default when it is absent or not a whole number of at
-// least one. The client caps it at the most the source allows.
+// least one. The client keeps it inside the range it supports.
 func audnexusPerMinuteFromEntries(entries []*pluginv1.ConfigEntry) int {
 	perMinute := provider.DefaultAudnexusPerMinute
 	for _, entry := range entries {

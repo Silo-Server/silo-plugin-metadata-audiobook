@@ -25,7 +25,7 @@ metadata provider chain. It has two global settings:
 - **Request limits**: how many requests a minute the plugin sends to Audnexus,
   100 by default. The public Audnexus API allows 300 a minute for each
   address. A higher limit matches a large library sooner; the setting accepts
-  up to 300.
+  20 to 300.
 
 ## Development
 

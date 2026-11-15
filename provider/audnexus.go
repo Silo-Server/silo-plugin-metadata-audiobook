@@ -167,6 +167,12 @@ const (
 	// api.audnex.us advertises 300 requests a minute for each address
 	// (x-ratelimit-limit) and answers 429 beyond it.
 	MaxAudnexusPerMinute = 300
+	// MinAudnexusPerMinute is the lowest. A request waits on the limiter
+	// inside providerTimeout, and the limiter refuses at once a wait that
+	// would outlast it. At 20 a minute a request is three seconds behind the
+	// one before it, so a few lookups arriving together still fit; a rate of
+	// one or two a minute would fail them instead of slowing them down.
+	MinAudnexusPerMinute = 20
 )
 
 // NewAudnexusClient creates an Audnexus client limited to
@@ -179,11 +185,12 @@ func NewAudnexusClient() *AudnexusClient {
 	}
 }
 
-// SetRequestsPerMinute changes the request rate, kept between 1 and
-// MaxAudnexusPerMinute. Safe to call while requests wait on the limiter;
-// they are released at the new rate.
+// SetRequestsPerMinute changes the request rate, kept between
+// MinAudnexusPerMinute and MaxAudnexusPerMinute. Safe to call while requests
+// wait on the limiter: a request already waiting keeps the slot it was given,
+// and requests after it are spaced at the new rate.
 func (c *AudnexusClient) SetRequestsPerMinute(perMinute int) {
-	perMinute = min(max(perMinute, 1), MaxAudnexusPerMinute)
+	perMinute = min(max(perMinute, MinAudnexusPerMinute), MaxAudnexusPerMinute)
 	c.limiter.SetLimit(rate.Limit(float64(perMinute) / 60.0))
 }
 

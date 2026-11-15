@@ -53,7 +53,7 @@ func TestRuntimeServerConfigureAppliesSources(t *testing.T) {
 
 // The "limits" entry sets the Audnexus request rate. A missing entry, or a
 // value that is not a whole number of at least one, leaves the default; a
-// value above what Audnexus allows is capped.
+// value outside the supported range is brought to its nearest end.
 func TestConfigureSetsAudnexusRate(t *testing.T) {
 	server := &runtimeServer{provider: provider.NewProvider()}
 	configure := func(value any) int {
@@ -80,6 +80,7 @@ func TestConfigureSetsAudnexusRate(t *testing.T) {
 		{"set", 280, 280},
 		{"entry removed again", nil, provider.DefaultAudnexusPerMinute},
 		{"above the source's allowance", 5000, provider.MaxAudnexusPerMinute},
+		{"too slow for a request's deadline", 2, provider.MinAudnexusPerMinute},
 		{"zero", 0, provider.DefaultAudnexusPerMinute},
 		{"fraction", 2.5, provider.DefaultAudnexusPerMinute},
 		{"not a number", "fast", provider.DefaultAudnexusPerMinute},
