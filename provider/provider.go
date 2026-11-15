@@ -233,7 +233,13 @@ type FailureKind string
 
 const (
 	FailureBlocked     FailureKind = "blocked"      // 401/403 -- refuses us entirely
-	FailureRateLimited FailureKind = "rate-limited" // 429, or our own limiter starving
+	FailureRateLimited FailureKind = "rate-limited" // 429: the source asked us to slow down
+	// FailureBusy is our own limiter: the request could not get a slot inside
+	// the deadline. The source never saw it and never throttled us, so this
+	// must not reach the host as throttling. The host answers throttling by
+	// pausing the whole plugin, which would stop the fast sources because one
+	// slow scraper has a queue.
+	FailureBusy        FailureKind = "busy"
 	FailureTimeout     FailureKind = "timeout"
 	FailureUnavailable FailureKind = "unavailable" // network, 5xx, bad payload
 )
@@ -284,8 +290,8 @@ func (e *ProvidersFailedError) Unwrap() []error {
 	return errs
 }
 
-// RateLimited reports whether any provider failed for a throttling reason, so
-// the caller can ask the host for a longer backoff than a plain retry.
+// RateLimited reports whether any provider was throttled by its source, so the
+// caller can ask the host to back off instead of retrying soon.
 func (e *ProvidersFailedError) RateLimited() bool {
 	for _, f := range e.Failures {
 		if f.Kind == FailureRateLimited {
@@ -305,15 +311,14 @@ func classifyFailure(err error) FailureKind {
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
+	// golang.org/x/time/rate refuses when the wait would outlast the
+	// deadline. That is our own limiter queueing us, not the provider.
+	case strings.Contains(msg, "rate: wait"),
+		strings.Contains(msg, "would exceed context deadline"):
+		return FailureBusy
 	case errors.Is(err, context.DeadlineExceeded),
 		strings.Contains(msg, "deadline exceeded"),
-		strings.Contains(msg, "timeout"),
-		// golang.org/x/time/rate refuses when the wait would outlast the
-		// deadline. That is our own limiter throttling us, not the provider.
-		strings.Contains(msg, "would exceed context deadline"):
-		if strings.Contains(msg, "rate:") || strings.Contains(msg, "would exceed context deadline") {
-			return FailureRateLimited
-		}
+		strings.Contains(msg, "timeout"):
 		return FailureTimeout
 	case strings.Contains(msg, "429"),
 		strings.Contains(msg, "too many requests"),
@@ -337,11 +342,31 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	defer cancel()
 
 	match, err := p.fetchPrimary(tctx, q)
+	if err != nil {
+		// As in Search, the source's own error text stays in the plugin log.
+		log.Printf("audiobook-metadata: fetch error: %v", err)
+		return nil, &FetchFailedError{Kind: classifyFailure(err), Err: err}
+	}
 	if match != nil {
 		p.backfillCover(tctx, match, q)
 	}
-	return match, err
+	return match, nil
 }
+
+// FetchFailedError reports that the source asked for one record could not
+// answer. Like ProvidersFailedError, its text names a failure kind and never
+// quotes the source, so a status code in a source's message cannot be read by
+// the host as a verdict on the item.
+type FetchFailedError struct {
+	Kind FailureKind
+	Err  error
+}
+
+func (e *FetchFailedError) Error() string {
+	return fmt.Sprintf("audiobook source could not answer (%s)", e.Kind)
+}
+
+func (e *FetchFailedError) Unwrap() error { return e.Err }
 
 // fetchPrimary resolves the best metadata match by provider hint, then by ASIN
 // fallback. It returns the first source that responds regardless of whether

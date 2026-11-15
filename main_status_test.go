@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
+	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 )
 
 // The host classifies our failure by gRPC code; codes.Unknown is the one case
@@ -62,5 +64,49 @@ func TestSearchFailureStatusPassesThroughOtherErrors(t *testing.T) {
 	sentinel := errors.New("some other failure")
 	if got := searchFailureStatus(sentinel); !errors.Is(got, sentinel) {
 		t.Fatalf("expected the original error, got %v", got)
+	}
+}
+
+// A record fetch follows the same contract. Our own limiter being full is
+// not throttling: ResourceExhausted makes the host stop calling the whole
+// plugin, so it is kept for a source that asked us to slow down.
+func TestFetchFailureStatusCodes(t *testing.T) {
+	tests := []struct {
+		kind provider.FailureKind
+		want codes.Code
+	}{
+		{provider.FailureRateLimited, codes.ResourceExhausted},
+		{provider.FailureBusy, codes.Unavailable},
+		{provider.FailureBlocked, codes.Unavailable},
+	}
+	for _, tc := range tests {
+		err := fetchFailureStatus(&provider.FetchFailedError{Kind: tc.kind, Err: errors.New("source: HTTP 403")})
+		if got := status.Code(err); got != tc.want {
+			t.Errorf("%s: code = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+
+	busy := searchFailureStatus(&provider.ProvidersFailedError{Failures: []provider.ProviderFailure{
+		{Provider: "audible", Kind: provider.FailureBusy},
+	}})
+	if got := status.Code(busy); got != codes.Unavailable {
+		t.Errorf("search with a busy source: code = %v, want Unavailable", got)
+	}
+}
+
+// A request the host has already cancelled is reported as cancelled, not as
+// the sources being unavailable.
+func TestCancelledRequestIsNotASourceFailure(t *testing.T) {
+	ms := &metadataServer{runtime: &runtimeServer{provider: provider.NewProvider()}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := ms.GetMetadata(ctx, &pluginv1.GetMetadataRequest{ProviderId: "B002V0QHBU", ItemType: "audiobook"})
+	if got := status.Code(err); got != codes.Canceled {
+		t.Errorf("GetMetadata: code = %v (%v), want Canceled", got, err)
+	}
+	_, err = ms.Search(ctx, &pluginv1.SearchMetadataRequest{Query: "Book", ItemType: "audiobook"})
+	if got := status.Code(err); got != codes.Canceled {
+		t.Errorf("Search: code = %v (%v), want Canceled", got, err)
 	}
 }

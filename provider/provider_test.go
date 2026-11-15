@@ -3,8 +3,12 @@ package provider
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
 )
 
 func TestProviderHintFromIDs(t *testing.T) {
@@ -177,7 +181,7 @@ func TestClassifyFailure(t *testing.T) {
 		{errors.New("audnexus: HTTP 401"), FailureBlocked},
 		{errors.New("itunes: HTTP 429"), FailureRateLimited},
 		// Our own limiter refusing, not the provider throttling us.
-		{errors.New("rate: Wait(n=1) would exceed context deadline"), FailureRateLimited},
+		{errors.New("rate: Wait(n=1) would exceed context deadline"), FailureBusy},
 		{context.DeadlineExceeded, FailureTimeout},
 		{errors.New("storytel: HTTP 503"), FailureUnavailable},
 	}
@@ -185,5 +189,29 @@ func TestClassifyFailure(t *testing.T) {
 		if got := classifyFailure(c.in); got != c.want {
 			t.Errorf("classifyFailure(%v) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// A failed record fetch reports its kind and keeps the source's text, with
+// any status code in it, out of the message the host receives.
+func TestFetchWrapsSourceFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	p := NewProvider()
+	p.Audnexus.baseURL = srv.URL
+
+	_, err := p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: map[string]string{"audnexus": "B002V0QHBU"}})
+	var failed *FetchFailedError
+	if !errors.As(err, &failed) {
+		t.Fatalf("Fetch error = %v, want a FetchFailedError", err)
+	}
+	if failed.Kind != FailureRateLimited {
+		t.Errorf("Kind = %q, want %q", failed.Kind, FailureRateLimited)
+	}
+	if strings.Contains(failed.Error(), "429") {
+		t.Errorf("message %q quotes the source status", failed.Error())
 	}
 }
