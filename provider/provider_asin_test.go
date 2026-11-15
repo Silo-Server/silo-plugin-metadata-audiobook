@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,11 +20,22 @@ import (
 type asinSources struct {
 	p                           *Provider
 	audnexus, audimeta, audible atomic.Int32
+	// audibleMissing makes the Audible product page answer 404.
+	audibleMissing bool
 }
 
-func newASINSources(t *testing.T, audnexusKnows bool) *asinSources {
+// How the Audnexus stub answers a book request.
+const (
+	audnexusKnown   = "known"
+	audnexusUnknown = "unknown" // 404
+	audnexusDown    = "down"    // 500
+	audnexusStalled = "stalled" // never answers
+)
+
+func newASINSources(t *testing.T, audnexusMode string) *asinSources {
 	t.Helper()
 	s := &asinSources{p: NewProvider()}
+	stalled := make(chan struct{})
 
 	book, err := os.ReadFile("testdata/audnexus_book.json")
 	if err != nil {
@@ -31,14 +43,21 @@ func newASINSources(t *testing.T, audnexusKnows bool) *asinSources {
 	}
 	audnexus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.audnexus.Add(1)
-		if !audnexusKnows {
+		switch audnexusMode {
+		case audnexusUnknown:
 			http.NotFound(w, r)
-			return
+		case audnexusDown:
+			http.Error(w, "down", http.StatusInternalServerError)
+		case audnexusStalled:
+			<-stalled
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(book)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(book)
 	}))
 	t.Cleanup(audnexus.Close)
+	// Registered after Close so it runs first and lets a stalled handler end.
+	t.Cleanup(func() { close(stalled) })
 	s.p.Audnexus.baseURL = audnexus.URL
 
 	// AudiMeta answers every request with 403, as the retired service does.
@@ -61,6 +80,9 @@ func newASINSources(t *testing.T, audnexusKnows bool) *asinSources {
 	}
 	s.p.Audible.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		s.audible.Add(1)
+		if s.audibleMissing {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}, nil
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"text/html"}},
@@ -77,7 +99,7 @@ func TestFetchByASINAlone(t *testing.T) {
 	ids := map[string]string{"asin": "B002V0QHBU"}
 
 	t.Run("known to audnexus", func(t *testing.T) {
-		s := newASINSources(t, true)
+		s := newASINSources(t, audnexusKnown)
 		m, err := s.p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: ids})
 		if err != nil || m == nil || m.Provider != "audnexus" {
 			t.Fatalf("Fetch = (%+v, %v), want the audnexus record", m, err)
@@ -88,7 +110,7 @@ func TestFetchByASINAlone(t *testing.T) {
 	})
 
 	t.Run("unknown asin is no record", func(t *testing.T) {
-		s := newASINSources(t, false)
+		s := newASINSources(t, audnexusUnknown)
 		m, err := s.p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: ids})
 		if err != nil || m != nil {
 			t.Fatalf("Fetch = (%+v, %v), want (nil, nil)", m, err)
@@ -99,7 +121,7 @@ func TestFetchByASINAlone(t *testing.T) {
 	})
 
 	t.Run("audimeta is asked when switched on", func(t *testing.T) {
-		s := newASINSources(t, false)
+		s := newASINSources(t, audnexusUnknown)
 		cfg := DefaultSourceConfig()
 		cfg.AudiMeta = true
 		s.p.SetSources(cfg)
@@ -118,7 +140,7 @@ func TestFetchAudibleIDPrefersAudnexus(t *testing.T) {
 	ids := map[string]string{"audible": "B002V0QHBU", "asin": "B002V0QHBU"}
 
 	t.Run("audnexus has the record", func(t *testing.T) {
-		s := newASINSources(t, true)
+		s := newASINSources(t, audnexusKnown)
 		m, err := s.p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: ids})
 		if err != nil || m == nil || m.Provider != "audnexus" {
 			t.Fatalf("Fetch = (%+v, %v), want the audnexus record", m, err)
@@ -129,7 +151,7 @@ func TestFetchAudibleIDPrefersAudnexus(t *testing.T) {
 	})
 
 	t.Run("audnexus has no record", func(t *testing.T) {
-		s := newASINSources(t, false)
+		s := newASINSources(t, audnexusUnknown)
 		m, err := s.p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: ids})
 		if err != nil || m == nil || m.Provider != "audible" {
 			t.Fatalf("Fetch = (%+v, %v), want the audible record", m, err)
@@ -140,9 +162,46 @@ func TestFetchAudibleIDPrefersAudnexus(t *testing.T) {
 	})
 }
 
+// A stalled or failing Audnexus must neither starve the scraper of its share
+// of the deadline nor turn into "no record" when the scraper finds nothing.
+func TestFetchAudibleIDWhenAudnexusCannotAnswer(t *testing.T) {
+	ids := map[string]string{"audible": "B002V0QHBU", "asin": "B002V0QHBU"}
+
+	t.Run("stalled audnexus leaves time for audible", func(t *testing.T) {
+		probe := audnexusProbeTimeout
+		audnexusProbeTimeout = 20 * time.Millisecond
+		t.Cleanup(func() { audnexusProbeTimeout = probe })
+
+		s := newASINSources(t, audnexusStalled)
+		m, err := s.p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: ids})
+		if err != nil || m == nil || m.Provider != "audible" {
+			t.Fatalf("Fetch = (%+v, %v), want the audible record", m, err)
+		}
+	})
+
+	t.Run("audnexus down and audible has no record is a failure", func(t *testing.T) {
+		s := newASINSources(t, audnexusDown)
+		s.audibleMissing = true
+		m, err := s.p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: ids})
+		if err == nil || m != nil {
+			t.Fatalf("Fetch = (%+v, %v), want the audnexus failure", m, err)
+		}
+	})
+
+	t.Run("both without a record is no record", func(t *testing.T) {
+		s := newASINSources(t, audnexusUnknown)
+		s.audibleMissing = true
+		m, err := s.p.Fetch(context.Background(), metadata.SearchQuery{ProviderIDs: ids})
+		if err != nil || m != nil {
+			t.Fatalf("Fetch = (%+v, %v), want (nil, nil)", m, err)
+		}
+	})
+}
+
 type delayedSearch struct {
 	delay   time.Duration
 	matches []metadata.Match
+	err     error
 }
 
 func (d delayedSearch) Search(ctx context.Context, _ metadata.SearchQuery) ([]metadata.Match, error) {
@@ -151,7 +210,7 @@ func (d delayedSearch) Search(ctx context.Context, _ metadata.SearchQuery) ([]me
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	return d.matches, nil
+	return d.matches, d.err
 }
 
 // Results come back in fan-out order even when a later source answers first.
@@ -168,5 +227,19 @@ func TestSearchResultsKeepFanOutOrder(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Provider != "first" || got[1].Provider != "second" {
 		t.Fatalf("order = %+v, want first then second", got)
+	}
+}
+
+// A source that returns matches together with an error has failed: its
+// matches are dropped, so a search in which every source failed still
+// reports the failure.
+func TestSearchDropsMatchesFromAFailedSource(t *testing.T) {
+	tasks := []searchTask{
+		{name: "broken", fn: delayedSearch{matches: []metadata.Match{{Provider: "broken"}}, err: errors.New("broken: HTTP 503")}},
+	}
+	got, err := searchAll(context.Background(), tasks, metadata.SearchQuery{Title: "Book"})
+	var failed *ProvidersFailedError
+	if !errors.As(err, &failed) || len(got) != 0 {
+		t.Fatalf("searchAll = (%+v, %v), want no matches and a ProvidersFailedError", got, err)
 	}
 }

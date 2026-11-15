@@ -39,6 +39,13 @@ const (
 	searchWorkers = 3
 )
 
+// audnexusProbeTimeout bounds the Audnexus attempt made before a fetch falls
+// back to the Audible scraper. Audnexus normally answers in well under a
+// second; without a bound of its own, a stalled Audnexus would spend the
+// whole providerTimeout and leave the scraper nothing for its limiter wait
+// and request. A variable so tests can shorten it.
+var audnexusProbeTimeout = 5 * time.Second
+
 // searchProvider is the minimal interface each backend must satisfy.
 type searchProvider interface {
 	Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error)
@@ -183,8 +190,10 @@ func searchAll(ctx context.Context, tasks []searchTask, q metadata.SearchQuery) 
 				// deliberately not forwarded verbatim to the host -- see
 				// ProvidersFailedError.Error() for why.
 				log.Printf("audiobook-metadata: provider %s search error: %v", name, err)
+				results[i] = result{err: err}
+				return
 			}
-			results[i] = result{matches: matches, err: err}
+			results[i] = result{matches: matches}
 		}(i, t.name, t.fn)
 	}
 	wg.Wait()
@@ -418,16 +427,25 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 // Audnexus serves the same catalog record through an API that answers in
 // well under a second, while the scraper is limited to one product page every
 // ten seconds. The scraper is asked only when Audnexus has no record for the
-// ASIN or cannot answer.
+// ASIN or cannot answer in audnexusProbeTimeout.
+//
+// "No record" needs both sources to say so. When Audnexus failed and the
+// scraper finds nothing, the Audnexus failure is returned, so the host
+// retries instead of filing the book as unknown.
 func (p *Provider) fetchAudibleASIN(ctx context.Context, asin string) (*metadata.Match, error) {
-	m, err := p.Audnexus.Fetch(ctx, asin)
+	probeCtx, cancel := context.WithTimeout(ctx, audnexusProbeTimeout)
+	m, audnexusErr := p.Audnexus.Fetch(probeCtx, asin)
+	cancel()
 	if m != nil {
 		return m, nil
 	}
-	if err != nil {
-		log.Printf("audiobook-metadata: audnexus fetch for an audible id failed, asking audible: %v", err)
+	if audnexusErr != nil {
+		log.Printf("audiobook-metadata: audnexus fetch for an audible id failed, asking audible: %v", audnexusErr)
 	}
-	return p.Audible.Fetch(ctx, asin)
+	if m, err := p.Audible.Fetch(ctx, asin); m != nil || err != nil {
+		return m, err
+	}
+	return nil, audnexusErr
 }
 
 // backfillCover fills a missing cover from cover-bearing sources. The primary
