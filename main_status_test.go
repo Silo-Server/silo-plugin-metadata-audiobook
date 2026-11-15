@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
+	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 )
 
 // The host classifies our failure by gRPC code; codes.Unknown is the one case
@@ -89,5 +91,22 @@ func TestFetchFailureStatusCodes(t *testing.T) {
 	}})
 	if got := status.Code(busy); got != codes.Unavailable {
 		t.Errorf("search with a busy source: code = %v, want Unavailable", got)
+	}
+}
+
+// A request the host has already cancelled is reported as cancelled, not as
+// the sources being unavailable.
+func TestCancelledRequestIsNotASourceFailure(t *testing.T) {
+	ms := &metadataServer{runtime: &runtimeServer{provider: provider.NewProvider()}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := ms.GetMetadata(ctx, &pluginv1.GetMetadataRequest{ProviderId: "B002V0QHBU", ItemType: "audiobook"})
+	if got := status.Code(err); got != codes.Canceled {
+		t.Errorf("GetMetadata: code = %v (%v), want Canceled", got, err)
+	}
+	_, err = ms.Search(ctx, &pluginv1.SearchMetadataRequest{Query: "Book", ItemType: "audiobook"})
+	if got := status.Code(err); got != codes.Canceled {
+		t.Errorf("Search: code = %v (%v), want Canceled", got, err)
 	}
 }

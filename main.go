@@ -95,6 +95,9 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 		Language:    req.GetLanguage(),
 	})
 	if err != nil {
+		if done := callerDone(ctx); done != nil {
+			return nil, done
+		}
 		return nil, searchFailureStatus(err)
 	}
 
@@ -125,6 +128,9 @@ func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetad
 		Language:    req.GetLanguage(),
 	})
 	if err != nil {
+		if done := callerDone(ctx); done != nil {
+			return nil, done
+		}
 		return nil, fetchFailureStatus(err)
 	}
 	if result == nil {
@@ -226,6 +232,18 @@ func searchFailureStatus(err error) error {
 		code = codes.ResourceExhausted
 	}
 	return status.Error(code, failed.Error())
+}
+
+// callerDone reports a request the host cancelled or let expire as Canceled
+// or DeadlineExceeded. Every source fails once the request's context is done,
+// and that must not read as the sources being down. A source running into the
+// plugin's own per-source timeout is different: the request is still live,
+// and that stays a source failure.
+func callerDone(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return status.FromContextError(err).Err()
+	}
+	return nil
 }
 
 // fetchFailureStatus does the same for a record fetch. Without a code the
