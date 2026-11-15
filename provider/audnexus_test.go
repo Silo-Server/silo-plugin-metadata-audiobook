@@ -199,6 +199,11 @@ func TestStripHTML(t *testing.T) {
 		{"<p>Hello <b>World</b></p>", "Hello World"},
 		{"No tags here", "No tags here"},
 		{"&amp; &lt;tag&gt;", "& <tag>"},
+		// Apple Books summaries use numeric entities and paragraph markup.
+		{"Halftime Walk&#xa0;A boy &#8220;and&#8221; a girl", "Halftime Walk A boy “and” a girl"},
+		{"<p>rare originality.</p><p>Read by Yareli</p>", "rare originality. Read by Yareli"},
+		{"<p>First.</p>\n<p>Second.</p>", "First.\nSecond."},
+		{"<p>First.</p>\r\n<p>Second.</p>", "First.\r\nSecond."},
 	}
 	for _, tt := range tests {
 		got := stripHTML(tt.in)
