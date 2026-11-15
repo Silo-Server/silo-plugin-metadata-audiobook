@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -164,15 +165,19 @@ func NewAudnexusClient() *AudnexusClient {
 	}
 }
 
-// Search resolves by ASIN when q.ProviderIDs["asin"] is set, and otherwise by
-// title against the /books/search endpoint.
+// Search resolves by ASIN when q.ProviderIDs["asin"] is set and Audnexus has
+// a book for it, and otherwise by title against the /books/search endpoint.
 func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
 	if asin := q.ProviderIDs["asin"]; asin != "" {
 		m, err := c.Fetch(ctx, asin)
-		if err != nil || m == nil {
+		if err != nil {
 			return nil, err
 		}
-		return []metadata.Match{*m}, nil
+		if m != nil {
+			return []metadata.Match{*m}, nil
+		}
+		// No book under that ASIN: the tag may be wrong, so the title still
+		// gets its search.
 	}
 
 	// Fall back to title search if a title is provided.
@@ -221,14 +226,30 @@ func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]
 	return results, nil
 }
 
-// Fetch returns full metadata for the given ASIN.
+// errAudnexusBadRequest is an HTTP 400 answer. For a book fetch it means
+// Audnexus has no book under that ID.
+var errAudnexusBadRequest = errors.New("audnexus: HTTP 400")
+
+// Fetch returns full metadata for the given ASIN, or nothing when Audnexus
+// has no book for it. That covers more than an unknown ASIN: a value that is
+// not an ASIN at all (a tag holding another service's ID) is not sent, and
+// Audnexus answers 400 for an ASIN it knows as something other than a book,
+// such as a podcast. Both describe the item, not the service. Reported as
+// failures, they would count against the provider on the host, which pauses
+// it after a few in a row.
 func (c *AudnexusClient) Fetch(ctx context.Context, asin string) (*metadata.Match, error) {
+	if !isLikelyASIN(asin) {
+		return nil, nil
+	}
 	if err := waitForLimiter(ctx, c.limiter); err != nil {
 		return nil, err
 	}
 
-	reqURL := c.baseURL + "/books/" + url.PathEscape(strings.ToUpper(asin)) + "?region=us"
+	reqURL := c.baseURL + "/books/" + url.PathEscape(normalizeASIN(asin)) + "?region=us"
 	body, err := c.get(ctx, reqURL)
+	if errors.Is(err, errAudnexusBadRequest) {
+		return nil, nil
+	}
 	if err != nil || body == nil {
 		// get() reports an unknown/delisted ASIN as (nil, nil); decoding that
 		// nil body would surface as a bogus JSON error instead of "no match".
@@ -260,6 +281,9 @@ func (c *AudnexusClient) get(ctx context.Context, reqURL string) ([]byte, error)
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
+	}
+	if resp.StatusCode == http.StatusBadRequest {
+		return nil, errAudnexusBadRequest
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("audnexus: HTTP %d", resp.StatusCode)

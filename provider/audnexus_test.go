@@ -232,3 +232,69 @@ func TestAudnexusFetchUnknownASINReturnsNoMatch(t *testing.T) {
 		t.Fatalf("match = %+v, want nil", match)
 	}
 }
+
+// Audnexus answers 400 for an ASIN it knows as a podcast, and a tag can hold
+// a value that is no ASIN at all. Both mean "no book", not a failed source;
+// only a server error is a failure.
+func TestAudnexusFetchNoBook(t *testing.T) {
+	tests := []struct {
+		name         string
+		asin         string
+		status       int
+		body         string
+		wantErr      bool
+		wantRequests int
+	}{
+		{"podcast asin", "B002V0QHBU", http.StatusBadRequest, `{"error":{"code":"CONTENT_TYPE_MISMATCH"}}`, false, 1},
+		{"not an asin", "itunes:1234567890", http.StatusBadRequest, `{"error":{"code":"BAD_REQUEST"}}`, false, 0},
+		{"server error", "B002V0QHBU", http.StatusInternalServerError, `oops`, true, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				http.Error(w, tc.body, tc.status)
+			}))
+			defer srv.Close()
+
+			client := NewAudnexusClient()
+			client.baseURL = srv.URL
+			m, err := client.Fetch(context.Background(), tc.asin)
+			if m != nil || (err != nil) != tc.wantErr {
+				t.Fatalf("Fetch = (%+v, %v), want no match and error=%v", m, err, tc.wantErr)
+			}
+			if requests != tc.wantRequests {
+				t.Fatalf("requests = %d, want %d", requests, tc.wantRequests)
+			}
+		})
+	}
+}
+
+// A search whose ASIN names no book still searches by title, so a wrong ASIN
+// tag does not hide a book Audnexus lists.
+func TestAudnexusSearchFallsBackToTitleWhenASINHasNoBook(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/audnexus_book.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/books/search" {
+			http.Error(w, `{"error":{"code":"CONTENT_TYPE_MISMATCH"}}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[" + string(fixture) + "]"))
+	}))
+	defer srv.Close()
+
+	client := NewAudnexusClient()
+	client.baseURL = srv.URL
+	got, err := client.Search(context.Background(), metadata.SearchQuery{
+		Title:       "Book",
+		ProviderIDs: map[string]string{"asin": "B0PODCAST1"},
+	})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Search = (%d results, %v), want the title search's one result", len(got), err)
+	}
+}
