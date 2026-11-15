@@ -64,3 +64,30 @@ func TestSearchFailureStatusPassesThroughOtherErrors(t *testing.T) {
 		t.Fatalf("expected the original error, got %v", got)
 	}
 }
+
+// A record fetch follows the same contract. Our own limiter being full is
+// not throttling: ResourceExhausted makes the host stop calling the whole
+// plugin, so it is kept for a source that asked us to slow down.
+func TestFetchFailureStatusCodes(t *testing.T) {
+	tests := []struct {
+		kind provider.FailureKind
+		want codes.Code
+	}{
+		{provider.FailureRateLimited, codes.ResourceExhausted},
+		{provider.FailureBusy, codes.Unavailable},
+		{provider.FailureBlocked, codes.Unavailable},
+	}
+	for _, tc := range tests {
+		err := fetchFailureStatus(&provider.FetchFailedError{Kind: tc.kind, Err: errors.New("source: HTTP 403")})
+		if got := status.Code(err); got != tc.want {
+			t.Errorf("%s: code = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+
+	busy := searchFailureStatus(&provider.ProvidersFailedError{Failures: []provider.ProviderFailure{
+		{Provider: "audible", Kind: provider.FailureBusy},
+	}})
+	if got := status.Code(busy); got != codes.Unavailable {
+		t.Errorf("search with a busy source: code = %v, want Unavailable", got)
+	}
+}
