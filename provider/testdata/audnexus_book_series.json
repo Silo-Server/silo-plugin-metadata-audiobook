@@ -1,0 +1,65 @@
+{
+  "asin": "B002V5D5ZE",
+  "authors": [
+    {
+      "name": "Douglas Adams"
+    }
+  ],
+  "copyright": 1980,
+  "description": "Now celebrating the 42nd anniversary of The Hitchhiker’s Guide to the Galaxy, soon to be a Hulu original series! “Douglas Adams is a terrific satirist.”—The Washington Post Book World Facing annihilation at the hands of the warlike Vogons? Time for a cup of tea! Join the cosmically...",
+  "formatType": "unabridged",
+  "genres": [
+    {
+      "asin": "18580606011",
+      "name": "Science Fiction & Fantasy",
+      "type": "genre"
+    },
+    {
+      "asin": "24427740011",
+      "name": "Comedy & Humor",
+      "type": "genre"
+    },
+    {
+      "asin": "18580607011",
+      "name": "Fantasy",
+      "type": "tag"
+    },
+    {
+      "asin": "18580628011",
+      "name": "Science Fiction",
+      "type": "tag"
+    },
+    {
+      "asin": "18580629011",
+      "name": "Adventure",
+      "type": "tag"
+    },
+    {
+      "asin": "18574496011",
+      "name": "Literature & Fiction",
+      "type": "tag"
+    }
+  ],
+  "image": "https://m.media-amazon.com/images/I/81GqaJqdzfL.jpg",
+  "isAdult": false,
+  "isbn": "9780739332085",
+  "language": "english",
+  "literatureType": "fiction",
+  "narrators": [
+    {
+      "name": "Martin Freeman"
+    }
+  ],
+  "publisherName": "Random House Audio",
+  "region": "us",
+  "releaseDate": "2006-07-04T00:00:00.000Z",
+  "runtimeLengthMin": 347,
+  "seriesPrimary": {
+    "asin": "B00713SI1W",
+    "name": "Hitchhiker's Guide to the Galaxy",
+    "position": "2"
+  },
+  "subtitle": "The Hitchhiker's Guide to the Galaxy, Book 2",
+  "summary": "<b><b>Now celebrating the 42nd anniversary of <i>The Hitchhiker’s Guide to the Galaxy,</i> soon to be a Hulu original series!</b> <br /><br />“Douglas Adams is a terrific satirist.”—<i>The Washington Post Book World</i></b>",
+  "title": "The Restaurant at the End of the Universe"
+}

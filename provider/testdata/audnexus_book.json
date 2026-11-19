@@ -1,18 +1,70 @@
 {
-  "asin": "B002V0QHBU",
-  "title": "The Hitchhiker's Guide to the Galaxy",
-  "subtitle": "Hitchhiker's Guide, Book 1",
-  "authors": [{"asin": "B000AQ1HEO", "name": "Douglas Adams"}],
-  "narrators": [{"name": "Stephen Fry"}],
-  "publisher": "Macmillan Audio",
-  "releaseDate": "2005-09-27",
-  "runtimeLengthMin": 193,
-  "description": "<p>Seconds before the Earth is demolished for a hyperspace bypass, Arthur Dent is saved by Ford Prefect.</p>",
-  "image": "https://m.media-amazon.com/images/I/51R6H0NG1TL._SL500_.jpg",
-  "genres": [
-    {"asin": "18580606011", "name": "Science Fiction", "type": "genre"},
-    {"asin": "18580606011", "name": "British", "type": "tag"}
+  "asin": "B08G9PRS1K",
+  "authors": [
+    {
+      "asin": "B00G0WYW92",
+      "name": "Andy Weir"
+    }
   ],
-  "series": [{"asin": "B0182NW6DC", "name": "Hitchhiker's Guide to the Galaxy", "position": "1"}],
-  "language": "english"
+  "copyright": 2021,
+  "description": "When the Sun is threatened by an alien microbe, the fate of humanity rests on the shoulders of an unlikely hero – and an even more unlikely friendship.",
+  "formatType": "unabridged",
+  "genres": [
+    {
+      "asin": "18574597011",
+      "name": "Mystery, Thriller & Suspense",
+      "type": "genre"
+    },
+    {
+      "asin": "18580606011",
+      "name": "Science Fiction & Fantasy",
+      "type": "genre"
+    },
+    {
+      "asin": "18574621011",
+      "name": "Thriller & Suspense",
+      "type": "tag"
+    },
+    {
+      "asin": "18574639011",
+      "name": "Suspense",
+      "type": "tag"
+    },
+    {
+      "asin": "18580628011",
+      "name": "Science Fiction",
+      "type": "tag"
+    },
+    {
+      "asin": "18580629011",
+      "name": "Adventure",
+      "type": "tag"
+    },
+    {
+      "asin": "18580639011",
+      "name": "Hard Science Fiction",
+      "type": "tag"
+    },
+    {
+      "asin": "18580645011",
+      "name": "Space Opera",
+      "type": "tag"
+    }
+  ],
+  "image": "https://m.media-amazon.com/images/I/81Nzlrfud+L.jpg",
+  "isAdult": false,
+  "isbn": "9781603935470",
+  "language": "english",
+  "literatureType": "fiction",
+  "narrators": [
+    {
+      "name": "Ray Porter"
+    }
+  ],
+  "publisherName": "Audible Studios",
+  "region": "us",
+  "releaseDate": "2021-05-04T00:00:00.000Z",
+  "runtimeLengthMin": 970,
+  "summary": "<p><b>THE #1 </b><b><i> NEW YORK TIMES </i></b><b> BESTSELLER FROM THE AUTHOR OF </b><b><i> THE MARTIAN. </i></b><b> Now a major motion picture starring Ryan Gosling, directed by Phil Lord and Christopher Miller, with a screenplay by Drew Goddard. Project Hail Mary is now playing exclusively in theaters.</b></p>",
+  "title": "Project Hail Mary"
 }

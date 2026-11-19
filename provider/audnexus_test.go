@@ -2,30 +2,48 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
 )
 
-func TestAudnexusFetch(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/audnexus_book.json")
+// The Audnexus fixtures are captures of api.audnex.us answers, taken
+// 2026-11-18 with region=us. Each is the full answer minus "rating" and
+// "ratings", with "summary" cut to its opening. Keep them real: a fixture
+// written by hand to fit this client once hid that the client read keys the
+// API does not send.
+//
+//	audnexus_book.json         GET /books/B08G9PRS1K, a book in no series
+//	audnexus_book_series.json  GET /books/B002V5D5ZE, a book with seriesPrimary
+//	audnexus_search.json       GET /books/search?q=Mistborn, first two results
+
+func newAudnexusStub(t *testing.T, fixture string) *AudnexusClient {
+	t.Helper()
+	body, err := os.ReadFile("testdata/" + fixture)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(fixture)
+		w.Write(body)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	client := NewAudnexusClient()
 	client.baseURL = srv.URL
+	return client
+}
 
-	m, err := client.Fetch(context.Background(), "B002V0QHBU")
+func TestAudnexusFetch(t *testing.T) {
+	client := newAudnexusStub(t, "audnexus_book.json")
+
+	m, err := client.Fetch(context.Background(), "B08G9PRS1K")
 	if err != nil {
 		t.Fatalf("Fetch error: %v", err)
 	}
@@ -36,57 +54,75 @@ func TestAudnexusFetch(t *testing.T) {
 	if m.Provider != "audnexus" {
 		t.Errorf("Provider = %q, want %q", m.Provider, "audnexus")
 	}
-	if m.ASIN != "B002V0QHBU" {
-		t.Errorf("ASIN = %q, want %q", m.ASIN, "B002V0QHBU")
+	if m.ASIN != "B08G9PRS1K" {
+		t.Errorf("ASIN = %q, want %q", m.ASIN, "B08G9PRS1K")
 	}
-	if m.Title != "The Hitchhiker's Guide to the Galaxy" {
+	if m.Title != "Project Hail Mary" {
 		t.Errorf("Title = %q", m.Title)
 	}
-	if len(m.Authors) == 0 || m.Authors[0] != "Douglas Adams" {
+	if len(m.Authors) != 1 || m.Authors[0] != "Andy Weir" {
 		t.Errorf("Authors = %v", m.Authors)
 	}
-	if len(m.Narrators) == 0 || m.Narrators[0] != "Stephen Fry" {
+	if len(m.Narrators) != 1 || m.Narrators[0] != "Ray Porter" {
 		t.Errorf("Narrators = %v", m.Narrators)
 	}
-	if m.DurationMin != 193 {
-		t.Errorf("DurationMin = %d, want 193", m.DurationMin)
+	if m.Publisher != "Audible Studios" {
+		t.Errorf("Publisher = %q, want %q", m.Publisher, "Audible Studios")
 	}
-	if m.PublishYear != 2005 {
-		t.Errorf("PublishYear = %d, want 2005", m.PublishYear)
+	if m.DurationMin != 970 {
+		t.Errorf("DurationMin = %d, want 970", m.DurationMin)
+	}
+	if m.PublishYear != 2021 {
+		t.Errorf("PublishYear = %d, want 2021", m.PublishYear)
+	}
+	if m.Language != "english" {
+		t.Errorf("Language = %q, want %q", m.Language, "english")
+	}
+	// The answer has neither series key.
+	if m.SeriesName != "" || m.SeriesPosition != "" {
+		t.Errorf("series = %q #%q, want none", m.SeriesName, m.SeriesPosition)
+	}
+	// Only "genre"-type entries should appear, not the six "tag" ones.
+	wantGenres := []string{"Mystery, Thriller & Suspense", "Science Fiction & Fantasy"}
+	if !slices.Equal(m.Genres, wantGenres) {
+		t.Errorf("Genres = %q, want %q", m.Genres, wantGenres)
+	}
+	if !strings.HasPrefix(m.Description, "When the Sun is threatened by an alien microbe") {
+		t.Errorf("Description = %q", m.Description)
+	}
+}
+
+// Audnexus names a book's series in seriesPrimary, an object, and its
+// publisher in publisherName.
+func TestAudnexusFetchSeries(t *testing.T) {
+	client := newAudnexusStub(t, "audnexus_book_series.json")
+
+	m, err := client.Fetch(context.Background(), "B002V5D5ZE")
+	if err != nil || m == nil {
+		t.Fatalf("Fetch = (%+v, %v), want a match", m, err)
+	}
+	if m.Title != "The Restaurant at the End of the Universe" {
+		t.Errorf("Title = %q", m.Title)
+	}
+	if m.Subtitle != "The Hitchhiker's Guide to the Galaxy, Book 2" {
+		t.Errorf("Subtitle = %q", m.Subtitle)
+	}
+	if m.Publisher != "Random House Audio" {
+		t.Errorf("Publisher = %q, want %q", m.Publisher, "Random House Audio")
 	}
 	if m.SeriesName != "Hitchhiker's Guide to the Galaxy" {
-		t.Errorf("SeriesName = %q", m.SeriesName)
+		t.Errorf("SeriesName = %q, want %q", m.SeriesName, "Hitchhiker's Guide to the Galaxy")
 	}
-	if m.SeriesPosition != "1" {
-		t.Errorf("SeriesPosition = %q, want %q", m.SeriesPosition, "1")
-	}
-	// Only "genre"-type entries should appear.
-	if len(m.Genres) != 1 || m.Genres[0] != "Science Fiction" {
-		t.Errorf("Genres = %v, want [Science Fiction]", m.Genres)
-	}
-	// HTML tags should be stripped.
-	if m.Description == "" {
-		t.Error("Description should not be empty after HTML strip")
+	if m.SeriesPosition != "2" {
+		t.Errorf("SeriesPosition = %q, want %q", m.SeriesPosition, "2")
 	}
 }
 
 func TestAudnexusSearchByASIN(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/audnexus_book.json")
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(fixture)
-	}))
-	defer srv.Close()
-
-	client := NewAudnexusClient()
-	client.baseURL = srv.URL
+	client := newAudnexusStub(t, "audnexus_book.json")
 
 	q := metadata.SearchQuery{
-		ProviderIDs: map[string]string{"asin": "B002V0QHBU"},
+		ProviderIDs: map[string]string{"asin": "B08G9PRS1K"},
 	}
 	results, err := client.Search(context.Background(), q)
 	if err != nil {
@@ -95,38 +131,73 @@ func TestAudnexusSearchByASIN(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0].ASIN != "B002V0QHBU" {
+	if results[0].ASIN != "B08G9PRS1K" {
 		t.Errorf("ASIN = %q", results[0].ASIN)
 	}
 }
 
+// The title search answers with an array of books in the fetch shape.
 func TestAudnexusTitleSearch(t *testing.T) {
-	// The title search endpoint returns an array of books.
-	fixture, err := os.ReadFile("testdata/audnexus_book.json")
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-	arrayFixture := "[" + string(fixture) + "]"
+	client := newAudnexusStub(t, "audnexus_search.json")
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(arrayFixture))
-	}))
-	defer srv.Close()
-
-	client := NewAudnexusClient()
-	client.baseURL = srv.URL
-
-	q := metadata.SearchQuery{Title: "Hitchhiker"}
-	results, err := client.Search(context.Background(), q)
+	results, err := client.Search(context.Background(), metadata.SearchQuery{Title: "Mistborn"})
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
-	if len(results) == 0 {
-		t.Fatal("expected at least one result")
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
 	}
-	if results[0].Title != "The Hitchhiker's Guide to the Galaxy" {
-		t.Errorf("Title = %q", results[0].Title)
+
+	// seriesPrimary is "The Mistborn Saga" at position 1 and seriesSecondary
+	// is "The Cosmere": the primary one is the book's series.
+	first := results[0]
+	if first.ASIN != "B002V0QCYU" || first.Title != "The Final Empire" {
+		t.Errorf("first result = %q %q", first.ASIN, first.Title)
+	}
+	if len(first.Narrators) != 1 || first.Narrators[0] != "Michael Kramer" {
+		t.Errorf("Narrators = %q, want [Michael Kramer]", first.Narrators)
+	}
+	if want := "https://m.media-amazon.com/images/I/917NNRCArfL.jpg"; first.CoverURL != want {
+		t.Errorf("CoverURL = %q, want %q", first.CoverURL, want)
+	}
+	if first.Publisher != "Macmillan Audio" {
+		t.Errorf("Publisher = %q, want %q", first.Publisher, "Macmillan Audio")
+	}
+	if first.SeriesName != "The Mistborn Saga" || first.SeriesPosition != "1" {
+		t.Errorf("series = %q #%q, want The Mistborn Saga #1", first.SeriesName, first.SeriesPosition)
+	}
+
+	// A series the book has no number in comes without a position.
+	second := results[1]
+	if second.Publisher != "Podium Audio" {
+		t.Errorf("Publisher = %q, want %q", second.Publisher, "Podium Audio")
+	}
+	if second.SeriesName != "The Fae & Alchemy Series" || second.SeriesPosition != "" {
+		t.Errorf("series = %q #%q, want The Fae & Alchemy Series with no position", second.SeriesName, second.SeriesPosition)
+	}
+}
+
+// No captured answer has a secondary series without a primary one. This one
+// is constructed: the seriesSecondary object is the one Audnexus sends for
+// B0189QQXRA, with the primary series it sends beside it left out.
+func TestAudnexusSecondarySeriesWithoutPrimary(t *testing.T) {
+	var book audnexusBook
+	answer := `{"seriesSecondary":{"asin":"B09KHFX6N1","name":"Wax and Wayne","position":"3"}}`
+	if err := json.Unmarshal([]byte(answer), &book); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	m := bookFromAudnexus(book)
+	if m.SeriesName != "Wax and Wayne" || m.SeriesPosition != "3" {
+		t.Errorf("series = %q #%q, want Wax and Wayne #3", m.SeriesName, m.SeriesPosition)
+	}
+}
+
+// Audnexus sends a plain-text description and an HTML summary. A book with
+// only the summary gets it as plain text.
+func TestBookFromAudnexusStripsSummaryHTML(t *testing.T) {
+	m := bookFromAudnexus(audnexusBook{Summary: "<p><b>A lone astronaut</b> must save the earth.</p>"})
+	if want := "A lone astronaut must save the earth."; m.Description != want {
+		t.Errorf("Description = %q, want %q", m.Description, want)
 	}
 }
 
