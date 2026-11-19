@@ -154,6 +154,12 @@ func TestAudnexusTitleSearch(t *testing.T) {
 	if first.ASIN != "B002V0QCYU" || first.Title != "The Final Empire" {
 		t.Errorf("first result = %q %q", first.ASIN, first.Title)
 	}
+	if len(first.Narrators) != 1 || first.Narrators[0] != "Michael Kramer" {
+		t.Errorf("Narrators = %q, want [Michael Kramer]", first.Narrators)
+	}
+	if want := "https://m.media-amazon.com/images/I/917NNRCArfL.jpg"; first.CoverURL != want {
+		t.Errorf("CoverURL = %q, want %q", first.CoverURL, want)
+	}
 	if first.Publisher != "Macmillan Audio" {
 		t.Errorf("Publisher = %q, want %q", first.Publisher, "Macmillan Audio")
 	}
