@@ -36,21 +36,23 @@ type AudnexusClient struct {
 	limiter    *rate.Limiter
 }
 
-// audnexusBook is the JSON shape returned by GET /books/{asin}.
+// audnexusBook is the JSON shape returned by GET /books/{asin}, and the shape
+// of each element of the array GET /books/search returns.
 type audnexusBook struct {
 	ASIN             string           `json:"asin"`
 	Title            string           `json:"title"`
 	Subtitle         string           `json:"subtitle"`
 	Authors          []audnexusPerson `json:"authors"`
 	Narrators        []audnexusPerson `json:"narrators"`
-	Publisher        string           `json:"publisher"`
+	PublisherName    string           `json:"publisherName"`
 	ReleaseDate      string           `json:"releaseDate"`
 	RuntimeLengthMin int              `json:"runtimeLengthMin"`
 	Description      string           `json:"description"`
 	Summary          string           `json:"summary"`
 	Image            string           `json:"image"`
 	Genres           []audnexusGenre  `json:"genres"`
-	Series           []audnexusSeries `json:"series"`
+	SeriesPrimary    audnexusSeries   `json:"seriesPrimary"`
+	SeriesSecondary  audnexusSeries   `json:"seriesSecondary"`
 	Language         string           `json:"language"`
 }
 
@@ -63,6 +65,9 @@ type audnexusGenre struct {
 	Type string `json:"type"` // "genre" | "tag"
 }
 
+// audnexusSeries is seriesPrimary or seriesSecondary. A book outside any
+// series has neither key, and a series the book has no number in has no
+// position.
 type audnexusSeries struct {
 	Name     string `json:"name"`
 	Position string `json:"position"`
@@ -132,10 +137,11 @@ func bookFromAudnexus(b audnexusBook) metadata.Match {
 	}
 	desc = stripHTML(desc)
 
-	var seriesName, seriesPos string
-	if len(b.Series) > 0 {
-		seriesName = b.Series[0].Name
-		seriesPos = b.Series[0].Position
+	// A Match names one series: the primary one, or the secondary one when
+	// the answer names no primary.
+	series := b.SeriesPrimary
+	if series.Name == "" {
+		series = b.SeriesSecondary
 	}
 
 	return metadata.Match{
@@ -146,14 +152,14 @@ func bookFromAudnexus(b audnexusBook) metadata.Match {
 		Subtitle:       b.Subtitle,
 		Authors:        authors,
 		Narrators:      narrators,
-		Publisher:      b.Publisher,
+		Publisher:      b.PublisherName,
 		PublishYear:    extractYear(b.ReleaseDate),
 		DurationMin:    b.RuntimeLengthMin,
 		Description:    desc,
 		CoverURL:       b.Image,
 		Genres:         genres,
-		SeriesName:     seriesName,
-		SeriesPosition: seriesPos,
+		SeriesName:     series.Name,
+		SeriesPosition: series.Position,
 		Language:       b.Language,
 	}
 }
