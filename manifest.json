@@ -141,6 +141,67 @@
           }
         ]
       }
+    },
+    {
+      "key": "audible",
+      "title": "Audible store",
+      "description": "The Audible store that Audnexus, AudiMeta and the Audible scraper look books up in. ASINs are regional: a book bought on audible.co.uk often has no record in the US store.",
+      "json_schema": "{\"type\":\"object\",\"properties\":{\"region\":{\"type\":\"string\",\"enum\":[\"us\",\"ca\",\"uk\",\"au\",\"fr\",\"de\",\"jp\",\"it\",\"in\",\"es\"]}},\"additionalProperties\":false}",
+      "required": false,
+      "admin_form": {
+        "submit_label": "Save Audible store",
+        "fields": [
+          {
+            "key": "region",
+            "label": "Store",
+            "description": "Default United States. Pick the store your audiobooks come from.",
+            "control": "ADMIN_FORM_CONTROL_SELECT",
+            "default_value": "us",
+            "options": [
+              {
+                "value": "us",
+                "label": "United States (audible.com)"
+              },
+              {
+                "value": "ca",
+                "label": "Canada (audible.ca)"
+              },
+              {
+                "value": "uk",
+                "label": "United Kingdom (audible.co.uk)"
+              },
+              {
+                "value": "au",
+                "label": "Australia (audible.com.au)"
+              },
+              {
+                "value": "fr",
+                "label": "France (audible.fr)"
+              },
+              {
+                "value": "de",
+                "label": "Germany (audible.de)"
+              },
+              {
+                "value": "jp",
+                "label": "Japan (audible.co.jp)"
+              },
+              {
+                "value": "it",
+                "label": "Italy (audible.it)"
+              },
+              {
+                "value": "in",
+                "label": "India (audible.in)"
+              },
+              {
+                "value": "es",
+                "label": "Spain (audible.es)"
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

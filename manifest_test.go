@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
@@ -92,6 +93,49 @@ func TestManifestLimitsSchemaMatchesDefaults(t *testing.T) {
 		return
 	}
 	t.Fatal("manifest has no \"limits\" global config schema")
+}
+
+// Every store the "audible" form offers must be one the provider knows, or
+// picking it would silently query the default store instead.
+func TestManifestAudibleSchemaMatchesProvider(t *testing.T) {
+	manifest, err := publicmanifest.Load(manifestJSON)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	for _, schema := range manifest.GetGlobalConfigSchema() {
+		if schema.GetKey() != "audible" {
+			continue
+		}
+		var jsonSchema struct {
+			Properties map[string]struct {
+				Enum []string `json:"enum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal([]byte(schema.GetJsonSchema()), &jsonSchema); err != nil {
+			t.Fatalf("parse json_schema: %v", err)
+		}
+		fields := schema.GetAdminForm().GetFields()
+		if len(fields) != 1 || fields[0].GetKey() != "region" {
+			t.Fatalf("audible form fields = %v, want region alone", fields)
+		}
+		var options []string
+		for _, option := range fields[0].GetOptions() {
+			options = append(options, option.GetValue())
+		}
+		if enum := jsonSchema.Properties["region"].Enum; !slices.Equal(options, enum) {
+			t.Errorf("form options = %v, schema enum = %v", options, enum)
+		}
+		for _, code := range options {
+			if !provider.IsAudibleRegion(code) {
+				t.Errorf("form offers %q, which the provider does not know", code)
+			}
+		}
+		if got := fields[0].GetDefaultValue().GetStringValue(); got != provider.DefaultAudibleRegion {
+			t.Errorf("manifest default = %q, code default = %q", got, provider.DefaultAudibleRegion)
+		}
+		return
+	}
+	t.Fatal("manifest has no \"audible\" global config schema")
 }
 
 // The host asks GetMetadata for a book by the ASIN in its tags only when the

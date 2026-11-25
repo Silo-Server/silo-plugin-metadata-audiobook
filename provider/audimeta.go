@@ -27,6 +27,7 @@ type AudiMetaClient struct {
 	httpClient *http.Client
 	baseURL    string
 	limiter    *rate.Limiter
+	region     audibleRegion
 }
 
 // audiMetaBook is the detailed book shape from GET /books/{asin}.
@@ -234,7 +235,7 @@ func (c *AudiMetaClient) Search(ctx context.Context, q metadata.SearchQuery) ([]
 	if len(q.Authors) > 0 {
 		params.Set("author", strings.Join(q.Authors, " "))
 	}
-	params.Set("region", "us")
+	params.Set("region", c.region.get())
 
 	reqURL := c.baseURL + "/search?" + params.Encode()
 	body, err := c.get(ctx, reqURL)
@@ -265,7 +266,7 @@ func (c *AudiMetaClient) Fetch(ctx context.Context, asin string) (*metadata.Matc
 		return nil, err
 	}
 
-	reqURL := c.baseURL + "/books/" + url.PathEscape(strings.ToUpper(asin)) + "?region=us"
+	reqURL := c.baseURL + "/books/" + url.PathEscape(strings.ToUpper(asin)) + "?region=" + c.region.get()
 	body, err := c.get(ctx, reqURL)
 	if err != nil || body == nil {
 		return nil, err

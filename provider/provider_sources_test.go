@@ -4,8 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
+
+	"golang.org/x/time/rate"
 
 	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
 )
@@ -81,5 +84,69 @@ func TestSearchWithNoSourcesDeclines(t *testing.T) {
 	results, err := p.Search(context.Background(), metadata.SearchQuery{Title: "Book"})
 	if err != nil || len(results) != 0 {
 		t.Fatalf("Search = (%d, %v), want (0, nil)", len(results), err)
+	}
+}
+
+// The Audible store setting reaches every source that queries Audible's
+// catalog, for ASIN lookups and title searches alike.
+func TestSetAudibleRegionReachesAudibleSources(t *testing.T) {
+	var mu sync.Mutex
+	var apiRegions, audibleHosts []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		apiRegions = append(apiRegions, r.URL.Query().Get("region"))
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/books/search":
+			w.Write([]byte(`[]`))
+		case "/search":
+			w.Write([]byte(`{}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+
+	p := NewProvider()
+	p.Audnexus.baseURL = api.URL
+	p.AudiMeta.baseURL = api.URL
+	p.Audible.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		audibleHosts = append(audibleHosts, r.URL.Host)
+		mu.Unlock()
+		return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody, Request: r}, nil
+	})}
+	for _, limiter := range []**rate.Limiter{&p.Audnexus.limiter, &p.AudiMeta.limiter, &p.Audible.limiter} {
+		*limiter = rate.NewLimiter(rate.Inf, 1)
+	}
+	p.SetAudibleRegion("uk")
+
+	queries := []metadata.SearchQuery{
+		{ProviderIDs: map[string]string{"asin": "B076HYPQLK"}},
+		{Title: "Killing Floor"},
+	}
+	for _, source := range []searchProvider{p.Audnexus, p.AudiMeta, p.Audible} {
+		for _, q := range queries {
+			if _, err := source.Search(context.Background(), q); err != nil {
+				t.Fatalf("%T Search(%+v): %v", source, q, err)
+			}
+		}
+	}
+
+	if len(apiRegions) != 4 {
+		t.Fatalf("Audnexus and AudiMeta requests = %d, want 4", len(apiRegions))
+	}
+	for _, region := range apiRegions {
+		if region != "uk" {
+			t.Errorf("API request region = %q, want uk", region)
+		}
+	}
+	if len(audibleHosts) != 2 {
+		t.Fatalf("Audible requests = %d, want 2", len(audibleHosts))
+	}
+	for _, host := range audibleHosts {
+		if host != "www.audible.co.uk" {
+			t.Errorf("Audible request host = %q, want www.audible.co.uk", host)
+		}
 	}
 }
