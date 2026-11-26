@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -33,10 +34,43 @@ import (
 type AudibleScraper struct {
 	httpClient *http.Client
 	limiter    *rate.Limiter
-	region     string // e.g. "us", "uk", "de"
+	region     audibleRegion
 }
 
-// audibleRegionMap maps region codes to Audible TLD suffixes.
+// DefaultAudibleRegion is the Audible store queried until an admin picks
+// another one.
+const DefaultAudibleRegion = "us"
+
+// audibleRegion is the Audible store a client queries. Safe to change while
+// requests run.
+type audibleRegion struct {
+	code atomic.Pointer[string]
+}
+
+func (r *audibleRegion) get() string {
+	if code := r.code.Load(); code != nil {
+		return *code
+	}
+	return DefaultAudibleRegion
+}
+
+// set selects DefaultAudibleRegion for a code that is not in audibleRegionMap.
+func (r *audibleRegion) set(code string) {
+	if !IsAudibleRegion(code) {
+		code = DefaultAudibleRegion
+	}
+	r.code.Store(&code)
+}
+
+// IsAudibleRegion reports whether code names an Audible store the plugin can
+// query.
+func IsAudibleRegion(code string) bool {
+	_, ok := audibleRegionMap[code]
+	return ok
+}
+
+// audibleRegionMap maps region codes to Audible TLD suffixes. Audnexus accepts
+// the same codes for its region parameter.
 var audibleRegionMap = map[string]string{
 	"us": ".com",
 	"ca": ".ca",
@@ -59,17 +93,17 @@ var (
 
 const audibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-// NewAudibleScraper creates an Audible scraper for the US region with 6 rpm rate limit.
+// NewAudibleScraper creates an Audible scraper for DefaultAudibleRegion with
+// 6 rpm rate limit.
 func NewAudibleScraper() *AudibleScraper {
 	return &AudibleScraper{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		limiter:    newLimiter(6),
-		region:     "us",
 	}
 }
 
 func (s *AudibleScraper) tld() string {
-	if tld, ok := audibleRegionMap[s.region]; ok {
+	if tld, ok := audibleRegionMap[s.region.get()]; ok {
 		return tld
 	}
 	return ".com"

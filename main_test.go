@@ -91,6 +91,42 @@ func TestConfigureSetsAudnexusRate(t *testing.T) {
 	}
 }
 
+// The "audible" entry picks the Audible store. A missing entry, or a value
+// that is not a store the provider knows, leaves the default.
+func TestConfigureSetsAudibleRegion(t *testing.T) {
+	server := &runtimeServer{provider: provider.NewProvider()}
+	configure := func(value any) string {
+		t.Helper()
+		req := &pluginv1.ConfigureRequest{}
+		if value != nil {
+			audible, err := structpb.NewStruct(map[string]any{"region": value})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Config = []*pluginv1.ConfigEntry{{Key: "audible", Value: audible}}
+		}
+		if _, err := server.Configure(context.Background(), req); err != nil {
+			t.Fatalf("Configure() returned error: %v", err)
+		}
+		return server.provider.AudibleRegion()
+	}
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"no entry", nil, provider.DefaultAudibleRegion},
+		{"set", "uk", "uk"},
+		{"entry removed again", nil, provider.DefaultAudibleRegion},
+		{"unknown store", "gb", provider.DefaultAudibleRegion},
+		{"not a string", 44, provider.DefaultAudibleRegion},
+	} {
+		if got := configure(tc.value); got != tc.want {
+			t.Errorf("%s: Audible region = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestMetadataServerGetMetadata_ReturnsNilForUnknown(t *testing.T) {
 	rs := &runtimeServer{provider: provider.NewProvider()}
 	ms := &metadataServer{runtime: rs}

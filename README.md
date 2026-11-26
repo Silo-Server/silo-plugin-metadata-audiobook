@@ -18,7 +18,7 @@ on the item), whether or not it is enabled for title searches.
 ## Configuration
 
 Install the plugin and add **Audiobook Metadata** to an audiobook library's
-metadata provider chain. It has two global settings:
+metadata provider chain. It has three global settings:
 
 - **Search sources**: a switch per source. Adjust them if the defaults miss
   your catalog.
@@ -26,6 +26,9 @@ metadata provider chain. It has two global settings:
   100 by default. The public Audnexus API allows 300 a minute for each
   address. A higher limit matches a large library sooner; the setting accepts
   20 to 300.
+- **Audible store**: the Audible store that Audnexus, AudiMeta and the Audible
+  scraper look books up in, the United States by default. ASINs are regional,
+  so a book bought on another store's site may have no record in the US store.
 
 ## Development
 

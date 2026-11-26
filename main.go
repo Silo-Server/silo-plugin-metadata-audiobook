@@ -46,12 +46,30 @@ func (s *runtimeServer) GetManifest(context.Context, *pluginv1.GetManifestReques
 	return &pluginv1.GetManifestResponse{Manifest: s.manifest}, nil
 }
 
-// Configure applies the "sources" and "limits" global config. A missing or
-// partial entry leaves the defaults in place for the keys it does not name.
+// Configure applies the "sources", "limits" and "audible" global config. A
+// missing or partial entry leaves the defaults in place for the keys it does
+// not name.
 func (s *runtimeServer) Configure(_ context.Context, req *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
 	s.provider.SetSources(sourceConfigFromEntries(req.GetConfig()))
 	s.provider.Audnexus.SetRequestsPerMinute(audnexusPerMinuteFromEntries(req.GetConfig()))
+	s.provider.SetAudibleRegion(audibleRegionFromEntries(req.GetConfig()))
 	return &pluginv1.ConfigureResponse{}, nil
+}
+
+// audibleRegionFromEntries reads region from the "audible" config entry, or
+// the default when it is absent. The provider falls back to the default for a
+// code it does not know.
+func audibleRegionFromEntries(entries []*pluginv1.ConfigEntry) string {
+	region := provider.DefaultAudibleRegion
+	for _, entry := range entries {
+		if entry == nil || entry.GetKey() != "audible" || entry.GetValue() == nil {
+			continue
+		}
+		if v, ok := entry.GetValue().AsMap()["region"].(string); ok {
+			region = v
+		}
+	}
+	return region
 }
 
 // audnexusPerMinuteFromEntries reads audnexus_per_minute from the "limits"

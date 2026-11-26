@@ -34,6 +34,7 @@ type AudnexusClient struct {
 	httpClient *http.Client
 	baseURL    string
 	limiter    *rate.Limiter
+	region     audibleRegion
 }
 
 // audnexusBook is the JSON shape returned by GET /books/{asin}, and the shape
@@ -238,7 +239,7 @@ func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]
 	// old path returned 404 on all 20, the correct path answered 18.
 	params := url.Values{}
 	params.Set("q", q.Title)
-	params.Set("region", "us")
+	params.Set("region", c.region.get())
 	reqURL := c.baseURL + "/books/search?" + params.Encode()
 
 	body, err := c.get(ctx, reqURL)
@@ -285,7 +286,7 @@ func (c *AudnexusClient) Fetch(ctx context.Context, asin string) (*metadata.Matc
 		return nil, err
 	}
 
-	reqURL := c.baseURL + "/books/" + url.PathEscape(normalizeASIN(asin)) + "?region=us"
+	reqURL := c.baseURL + "/books/" + url.PathEscape(normalizeASIN(asin)) + "?region=" + c.region.get()
 	body, err := c.get(ctx, reqURL)
 	if errors.Is(err, errAudnexusBadRequest) {
 		return nil, nil

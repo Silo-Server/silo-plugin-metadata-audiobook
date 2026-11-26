@@ -120,6 +120,20 @@ func (p *Provider) Sources() SourceConfig {
 	return p.sources
 }
 
+// SetAudibleRegion selects the Audible store that Audnexus, AudiMeta and the
+// Audible scraper query, or DefaultAudibleRegion for a code IsAudibleRegion
+// rejects.
+func (p *Provider) SetAudibleRegion(code string) {
+	p.Audnexus.region.set(code)
+	p.AudiMeta.region.set(code)
+	p.Audible.region.set(code)
+}
+
+// AudibleRegion returns the Audible store the sources query.
+func (p *Provider) AudibleRegion() string {
+	return p.Audnexus.region.get()
+}
+
 type searchTask struct {
 	name string
 	fn   searchProvider
